@@ -157,6 +157,11 @@ SOURCES_CPP	+= $(shell find -L $(SOURCEDIRS) -name "*.cpp")
 
 DEFINES		+= -D__NDS__ -D__BLOCKSDS__ -DARM9
 
+# Appended last: the self-driving development ROM targets at the bottom of this
+# file set this on the command line to compile the scripted-input harness in.
+# It stays empty for the release build.
+DEFINES		+= $(DEVROM_DEFINE)
+
 ARCH		:= -mthumb -mcpu=arm946e-s+nofp
 
 SPECS		:= $(BLOCKSDS)/sys/crts/ds_arm9.specs
@@ -260,6 +265,7 @@ dump: $(DUMP)
 clean:
 	@echo "  CLEAN"
 	$(V)$(RM) $(ROM) $(DUMP) build $(SDIMAGE) compile_commands.json
+	$(V)$(RM) $(addsuffix .nds,$(DEVROMS))
 
 sdimage:
 	@echo "  MKFATIMG $(SDIMAGE) $(SDROOT)"
@@ -269,6 +275,39 @@ dldipatch: $(ROM)
 	@echo "  DLDIPATCH $(ROM)"
 	$(V)$(BLOCKSDS)/tools/dldipatch/dldipatch patch \
 		$(BLOCKSDS)/sys/dldi_r4/r4tf.dldi $(ROM)
+
+# Self-driving development ROMs
+# -----------------------------
+# Each of these builds the whole game again with the scripted-input harness
+# compiled in (the harness lives in source/input.c, behind the AUTOPLAY
+# defines) so the emulator can play unattended and screenshot screens a human
+# would otherwise have to reach by hand:
+#
+#     ./build.sh --autoplay   auto-play a battle
+#     ./build.sh --menu       auto level-up, exercise the card picker
+#     ./build.sh --tap        same, but picks the card by touch
+#     ./build.sh --boss       auto-play until the boss appears
+#     ./build.sh --ending     jump straight to the ending
+#
+# They re-enter make rather than sharing the rules above because NAME drives
+# BUILDDIR, ELF, DUMP and ROM, and all of those are resolved while this file is
+# being parsed. Giving each variant its own NAME keeps its objects and ROM
+# completely separate from the release build.
+
+DEVROMS			:= autoplay menu tap boss ending
+
+DEVROM_DEFINE_autoplay	:= -DAUTOPLAY
+DEVROM_DEFINE_menu	:= -DAUTOPLAY -DAUTOPLAY_MENU
+DEVROM_DEFINE_tap	:= -DAUTOPLAY -DAUTOPLAY_TAP_CARD
+DEVROM_DEFINE_boss	:= -DAUTOPLAY -DAUTOPLAY_BOSS
+DEVROM_DEFINE_ending	:= -DAUTOPLAY -DAUTOPLAY_ENDING
+
+.PHONY: $(DEVROMS)
+$(DEVROMS):
+	@$(MAKE) --no-print-directory \
+		NAME=$@ \
+		DEVROM_DEFINE='$(DEVROM_DEFINE_$@)' \
+		all
 
 ifeq ($(COMPDB),1)
 # Add an additional dependency to the "all" rule
