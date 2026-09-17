@@ -518,21 +518,26 @@ def prop_steam_vent(rng):
 # ---------------------------------------------------------------------------
 
 REGIONS = {
+    # The Kingdom is a wetland park rather than a town square: bright wet
+    # meadow, muddy banks, reed beds and wooden boardwalks instead of paved
+    # roads, with the ponds themselves added in build_cozy_hub_map() below.
+    # The palette is deliberately the sunny end of the marsh family so it reads
+    # as somewhere you want to come back to between runs.
     "hub": dict(
         ground=("grass_mid", "grass_light", "grass_dark"), tuft="grass_light",
-        ground2=("grey_light", "grey_mid", "grey_dark"),
-        path=("grey_mid", "grey_light", "grey_dark"),
-        ground3=("grass_dark", "grass_mid", "leaf_dark"),
+        ground2=("murk_mid", "murk_light", "murk_dark"),
+        path=("wood_mid", "wood_light", "wood_dark"),
+        ground3=("grass_dark", "grass_mid", "grn_dark"),
         foliage=("leaf_dark", "leaf_mid", "leaf_light"),
         rock=("rock_dark", "rock_mid", "rock_light"),
         wood=("wood_dark", "wood_mid", "wood_light"),
         water=("cyan_dark", "cyan_mid", "cyan_light"),
-        wall=("sponge_dark", "sponge_mid", "sponge_light"),
+        wall=("cream_light", "cream_mid", "cream_dark"),
         roof=("red_dark", "red_mid", "red_light"),
         bush=("leaf_dark", "leaf_mid", "leaf_light"),
         signature="oven",
         fruit="orange",
-        deco=("flower", "grass", "flower"),
+        deco=("reed", "flower", "reed"),
     ),
     "rain": dict(
         ground=("grn_dark", "grn_mid", "leaf_dark"), tuft="leaf_light",
@@ -746,13 +751,32 @@ def scatter_blob(grid, rng, cx, cy, r, tile_id, jitter=0.45):
 
 
 def build_cozy_hub_map(spec, rng):
+    """The Kingdom: a wetland park with a boardwalk plaza at its centre.
+
+    The four landmarks stay exactly where the C code looks for them --
+    hub_near_landmark() tests fixed pixel coordinates (1024,640 / 896,768 /
+    1152,768 / 1024,850), so the tiles under those points must not move. The
+    wetland is built around them rather than through them.
+
+    Ponds are SOLID, and the asset check refuses a map that is more than 90%
+    solid or that leaves less than 75% of its walkable tiles reachable from the
+    spawn. The four ponds below are sized and placed to respect both: each is
+    ringed by walkable mud and grass, and none of them touches the plaza, the
+    four boardwalks or a house.
+    """
     grid = [[T_TREE] * WORLD_COLS for _ in range(WORLD_ROWS)]
     cx, cy = WORLD_COLS // 2, WORLD_ROWS // 2  # (64, 48)
 
-    # Outer parkland clearing: 50x38 tiles (comfortably under 90% solid limit)
+    # Outer parkland clearing: 50x38 tiles (comfortably under 90% solid limit).
+    # The darker tone is scattered by a hash rather than by (x + y) % 5: a
+    # periodic rule lays the variation out on a diagonal lattice, which reads as
+    # tiling -- the one thing a park must not look like. Mixing two block sizes
+    # gives mottling that is irregular but still clumps.
     for y in range(cy - 18, cy + 19):
         for x in range(cx - 24, cx + 25):
-            grid[y][x] = T_GROUND_A if (x + y) % 5 != 0 else T_GROUND_C
+            h = (x * 73856093) ^ (y * 19349663) ^ ((x >> 2) * 83492791)
+            v = ((h >> 7) ^ (h >> 15)) % 100
+            grid[y][x] = T_GROUND_C if v < 15 else T_GROUND_A
 
     # Tree & bush natural perimeter around clearing
     for y in range(cy - 18, cy + 19):
@@ -778,33 +802,73 @@ def build_cozy_hub_map(spec, rng):
             for dx in range(3):
                 grid[by + dy][bx + dx] = T_BUILDING
 
-    # Central Circular Cobblestone Plaza (radius ~5.2 tiles)
+    # Central boardwalk plaza (radius ~5.2 tiles)
     for y in range(cy - 5, cy + 6):
         for x in range(cx - 6, cx + 7):
             d = ((x - cx) ** 2 + ((y - cy) * 1.2) ** 2) ** 0.5
             if d <= 5.2:
                 grid[y][x] = T_PATH
 
-    # Paved roads to 4 landmarks
-    # North road (to North Gate)
+    # Boardwalks out to the 4 landmarks
+    # North walk (to North Gate)
     for y in range(cy - 12, cy - 4):
         grid[y][cx] = T_PATH
         grid[y][cx - 1] = T_PATH
 
-    # South road (to Oven)
+    # South walk (to Oven)
     for y in range(cy + 4, cy + 13):
         grid[y][cx] = T_PATH
         grid[y][cx - 1] = T_PATH
 
-    # West road (to Pigeon)
+    # West walk (to Pigeon)
     for x in range(cx - 16, cx - 4):
         grid[cy][x] = T_PATH
         grid[cy - 1][x] = T_PATH
 
-    # East road (to Sacred Tree)
+    # East walk (to Sacred Tree)
     for x in range(cx + 4, cx + 17):
         grid[cy][x] = T_PATH
         grid[cy - 1][x] = T_PATH
+
+    # --- the wetland ---------------------------------------------------
+    # One pond per quadrant. The muddy margin is walkable on purpose: it is what
+    # makes the water read as a bank you could stand on rather than a hole, and
+    # it is also what keeps every pond ringed by reachable ground.
+    ponds = ((cx - 9, cy - 6), (cx + 9, cy - 6),
+             (cx - 9, cy + 6), (cx + 9, cy + 6))
+    for (px, py) in ponds:
+        for y in range(py - 3, py + 4):
+            for x in range(px - 3, px + 4):
+                d = ((x - px) ** 2 + ((y - py) * 1.15) ** 2) ** 0.5
+                if d <= 1.9:
+                    grid[y][x] = T_WATER
+                elif d <= 2.9:
+                    grid[y][x] = T_GROUND_B
+
+        # Reed clumps on the OUTER corners only. The inner side has to stay
+        # clear or the reeds would fence the pond off from the plaza.
+        step_x = -1 if px < cx else 1
+        step_y = -1 if py < cy else 1
+        for (ox, oy) in ((step_x * 3, step_y * 3), (step_x * 4, step_y * 1),
+                         (step_x * 1, step_y * 4)):
+            gx, gy = px + ox, py + oy
+            if abs(gx - cx) < 24 and abs(gy - cy) < 18:
+                grid[gy][gx] = T_BUSH
+
+    # Flower and tall-grass clumps through the lawn: this is what makes the
+    # clearing read as a tended park instead of an empty field. Both are
+    # walkable, so they cost nothing against the solid-tile limit.
+    for (fx, fy, tid) in (
+        (-19, -14, T_FLOWER), (-6, -15, T_TALLGRASS), (7, -14, T_FLOWER),
+        (19, -13, T_TALLGRASS), (-20, 4, T_FLOWER), (-17, 12, T_TALLGRASS),
+        (16, -4, T_TALLGRASS), (19, 6, T_FLOWER), (-11, 15, T_FLOWER),
+        (-3, -16, T_FLOWER), (9, 15, T_TALLGRASS), (14, 13, T_FLOWER),
+        (-21, -8, T_FLOWER), (21, -9, T_FLOWER), (-21, 9, T_TALLGRASS),
+        (21, 10, T_FLOWER),
+    ):
+        gx, gy = cx + fx, cy + fy
+        if 0 <= gx < WORLD_COLS and 0 <= gy < WORLD_ROWS:
+            grid[gy][gx] = tid
 
     # Landmarks on map
     # North Gate Pillars at (1024, 640 px) -> (cx, cy - 8)
@@ -828,7 +892,7 @@ def build_cozy_hub_map(spec, rng):
     grid[cy + 6][cx] = T_FLOWER
     grid[cy + 6][cx - 1] = T_FLOWER
 
-    # Flower beds along paths
+    # Flower beds along the boardwalks
     for i in range(-3, 4):
         if abs(i) > 1:
             grid[cy - 6][cx + i] = T_FLOWER
