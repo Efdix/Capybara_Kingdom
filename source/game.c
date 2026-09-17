@@ -2413,16 +2413,66 @@ static void spawn_update(void)
 }
 
 // ---------------------------------------------------------------------------
-// Bottom-screen HUD
+// Top-screen vitals
+//
+// Hearts, level and the experience bar live on the top screen, over the world.
+// They are the numbers a player glances at mid-fight, and the bottom screen is
+// already spoken for by the map, the cards and the touch slots -- putting the
+// vitals there too meant they competed with the things drawn around them.
+//
+// Everything here is SCREEN space: the top screen scrolls with the camera, so a
+// HUD element must not. Hence top_* rather than gfx_*.
 // ---------------------------------------------------------------------------
 
 static void draw_heart(int x, int y, uint8_t fill)
 {
-    sub_fill_rect(x, y + 1, 7, 5, PAL_OUTLINE);
-    sub_fill_rect(x + 1, y, 5, 7, PAL_OUTLINE);
-    sub_fill_rect(x + 1, y + 1, 5, 4, fill);
-    sub_fill_rect(x + 2, y + 2, 2, 2, PAL_PINK_LIGHT);
+    top_fill_rect(x, y + 1, 7, 5, PAL_OUTLINE);
+    top_fill_rect(x + 1, y, 5, 7, PAL_OUTLINE);
+    top_fill_rect(x + 1, y + 1, 5, 4, fill);
+    top_fill_rect(x + 2, y + 2, 2, 2, PAL_PINK_LIGHT);
 }
+
+static void hud_draw_top(void)
+{
+    Hero *h = &g_heroes[g_local_hero];
+    const RegionDef *rg = &g_regions[g_region_id];
+
+    // A solid band rather than a floating box: hairlines of text over moving
+    // terrain are unreadable once a crowd walks under them.
+    top_fill_rect(0, 0, AREA_W, VITALS_H, PAL_UI_PANEL);
+    top_fill_rect(0, VITALS_H, AREA_W, 2, PAL_UI_FRAME);
+
+    // Hearts, one row of up to twelve at an 8px pitch so they clear the level
+    // readout that follows.
+    for (int i = 0; i < h->hearts_max && i < HERO_MAX_HEARTS; i++)
+    {
+        uint8_t fill = (i < h->hearts) ? PAL_HUD_HEART : PAL_HUD_HEART_EMPTY;
+        draw_heart(6 + i * 8, 4, fill);
+    }
+
+    top_text_printf(9, 0, PAL_UI_GOLD_LIGHT, "Lv%d", h->level);
+    top_text_printf(13, 0, PAL_UI_GOLD_LIGHT, "%s", rg->name);
+
+    // Experience bar, sized to reach from the left margin to the difficulty
+    // readout.
+    top_rect_outline(6, 17, 100, 9, PAL_OUTLINE);
+    top_fill_rect(7, 18, 98, 7, PAL_UI_PANEL);
+    if (h->exp_need > 0)
+    {
+        int w = (98 * h->exp) / h->exp_need;
+        if (w > 98)
+            w = 98;
+        top_fill_rect(7, 18, w, 7, PAL_GREEN_SPARK);
+    }
+
+    top_text_printf(10, 1, PAL_UI_TEXT_DIM, "难度%d", g_difficulty + 1);
+    top_text_printf(13, 1, PAL_UI_TEXT, "%d:%02d",
+                    g_run_time / 3600, (g_run_time / 60) % 60);
+}
+
+// ---------------------------------------------------------------------------
+// Bottom-screen HUD
+// ---------------------------------------------------------------------------
 
 // A minimap of the whole region on the bottom screen, with the player on it.
 //
@@ -2533,9 +2583,11 @@ static void draw_offscreen_markers(void)
             return;   // it is on screen; nothing to point at
 
         // Clamp the marker onto the screen border, inset so the arrow is not
-        // half off the edge.
+        // half off the edge. The top inset clears the vitals band, which is
+        // drawn over this afterwards.
         int mx = sx < 8 ? 8 : (sx > AREA_W - 8 ? AREA_W - 8 : sx);
-        int my = sy < 8 ? 8 : (sy > AREA_H - 8 ? AREA_H - 8 : sy);
+        int my = sy < VITALS_BAND + 8 ? VITALS_BAND + 8
+                                      : (sy > AREA_H - 8 ? AREA_H - 8 : sy);
 
         gfx_fill_rect(mx - 5, my - 5, 10, 10, PAL_OUTLINE);
         gfx_fill_rect(mx - 4, my - 4, 8, 8, PAL_HUD_HEART);
@@ -2555,8 +2607,10 @@ static uint8_t card_kind_color(int kind)
     }
 }
 
-// The bottom screen during play: hearts, level and exp, ingredient progress,
-// and the cards currently held.
+// The bottom screen during play. The vitals moved to the top screen, so this is
+// what is left: what you are collecting, what you are carrying, and where you
+// are. The layout is hand-placed because the four touch slots at the bottom are
+// fixed and everything else has to stay clear of the map on the right.
 static void hud_draw(void)
 {
     text_clear();
@@ -2565,66 +2619,45 @@ static void hud_draw(void)
     Hero *h = &g_heroes[g_local_hero];
     const RegionDef *rg = &g_regions[g_region_id];
 
-    // Region + elapsed survival time, which is the run's real score.
-    text_printf(1, 0, PAL_UI_GOLD_LIGHT, "%s %d:%02d", rg->name,
-                g_run_time / 3600, (g_run_time / 60) % 60);
-
-    text_printf(12, 1, PAL_UI_TEXT_DIM, "难度%d", g_difficulty + 1);
-
-    // Hearts, two rows of six so twelve still fit.
-    for (int i = 0; i < h->hearts_max && i < HERO_MAX_HEARTS; i++)
-    {
-        uint8_t fill = (i < h->hearts) ? PAL_HUD_HEART : PAL_HUD_HEART_EMPTY;
-        draw_heart(8 + (i % 6) * 9, 20 + (i / 6) * 9, fill);
-    }
-
-    text_printf(1, 3, PAL_UI_TEXT, "等级 %d", h->level);
-    text_printf(9, 3, PAL_UI_TEXT_DIM, "坐标 %d,%d",
+    text_printf(1, 0, PAL_UI_TEXT_DIM, "收集%s", rg->ingredient);
+    text_printf(11, 0, PAL_UI_TEXT, "等级 %d", h->level);
+    text_printf(11, 1, PAL_UI_TEXT_DIM, "坐标 %d,%d",
                 (int)(h->x / TILE_PX), (int)(h->y / TILE_PX));
 
-    // Experience bar.
-    sub_rect_outline(58, 24, 76, 8, PAL_OUTLINE);
-    sub_fill_rect(59, 25, 74, 6, PAL_UI_PANEL);
-    if (h->exp_need > 0)
-    {
-        int w = (74 * h->exp) / h->exp_need;
-        if (w > 74) w = 74;
-        sub_fill_rect(59, 25, w, 6, PAL_GREEN_SPARK);
-    }
-
     // Ingredient progress toward the boss.
-    text_printf(1, 5, PAL_UI_TEXT_DIM, "收集%s", rg->ingredient);
     for (int i = 0; i < rg->target; i++)
     {
         uint8_t c = (i < g_ingredient_have) ? PAL_UI_GOLD : PAL_HUD_HEART_EMPTY;
-        int gx = 62 + (i % 12) * 8;
-        int gy = 40 + (i / 12) * 8;
+        int gx = 4 + (i % 12) * 8;
+        int gy = 20 + (i / 12) * 8;
         sub_fill_rect(gx, gy, 6, 6, c);
     }
 
+    // Row 9 clears both the held-card list above it and the touch bar below it,
+    // even once all twelve cards are held.
     if (g_boss_out)
-        text_draw(1, 7, "首领出现了！", PAL_HUD_HEART);
+        text_draw(1, 9, "首领出现了！", PAL_HUD_HEART);
 
     // The map of the region, which is the only way to know where you are in a
     // world this size.
     draw_minimap();
 
-    // Held cards, colour-coded by kind. Four per row, kept out of the map's
-    // column so the two never overlap.
-    text_draw(1, 9, "卡牌", PAL_UI_TEXT_DIM);
+    // Held cards, colour-coded by kind, in the left column so they never reach
+    // the map on the right.
+    text_draw(1, 3, "卡牌", PAL_UI_TEXT_DIM);
     int shown = 0;
     for (int i = 0; i < CARD_COUNT; i++)
     {
         if (h->cards[i] <= 0)
             continue;
-        int col = 5 + (shown % 3) * 3;
-        int row = 10 + (shown / 3);
+        int col = 1 + (shown % 3) * 4;
+        int row = 4 + (shown / 3);
         uint8_t c = card_kind_color(g_card_defs[i].kind);
         text_printf(col, row, c, "%s%d", g_card_defs[i].name, h->cards[i]);
         shown++;
     }
     if (shown == 0)
-        text_draw(5, 10, "升级就能获得卡牌", PAL_UI_TEXT_DIM);
+        text_draw(1, 4, "升级就能获得卡牌", PAL_UI_TEXT_DIM);
 
     // Active Skill Slots Touch Bar (y: 154..186)
     Hero *hl = &g_heroes[g_local_hero];
@@ -2873,6 +2906,10 @@ void game_update(void)
     }
 
     hud_draw();
+
+    // Last, so the vitals band sits over the world and over anything the world
+    // pass drew near the top of the screen.
+    hud_draw_top();
 }
 
 

@@ -24,9 +24,13 @@
 #define VIS_ROWS    AREA_H
 
 extern uint8_t *text_sub_buffer(void);
+extern uint8_t *text_main_buffer(void);
 
-// We keep our own pointer to the sub shadow buffer (defined in render.c).
+// The shadow buffer the text primitives write into. Both screens are 8bpp
+// bitmaps at the same stride, so one grid renderer serves the bottom-screen
+// menus and the top-screen play HUD; only the pointer differs.
 static uint8_t *g_sub = NULL;
+static uint8_t *g_main = NULL;
 
 // Character cell used for the text grid.
 #define CELL_W  12
@@ -41,6 +45,7 @@ static uint8_t *g_sub = NULL;
 void text_init(void)
 {
     g_sub = text_sub_buffer();
+    g_main = text_main_buffer();
     text_clear();
 }
 
@@ -112,7 +117,7 @@ static int glyph_index_cached(uint32_t cp)
 // ---------------------------------------------------------------------------
 
 // Draw one atlas glyph (4bpp, 1 = ink) at pixel position (px, py).
-static void draw_glyph(int index, int px, int py, uint8_t ink)
+static void draw_glyph(uint8_t *surf, int index, int px, int py, uint8_t ink)
 {
     if (index < 0 || index >= FONT_GLYPH_COUNT)
         return;
@@ -137,14 +142,14 @@ static void draw_glyph(int index, int px, int py, uint8_t ink)
                     int dx = px + tx + bx * 2 + 1;
                     int dy = py + ty + y;
                     if ((unsigned)dx < AREA_W && (unsigned)dy < VIS_ROWS)
-                        g_sub[dy * SUB_STRIDE + dx] = ink;
+                        surf[dy * SUB_STRIDE + dx] = ink;
                 }
                 if (lo)
                 {
                     int dx = px + tx + bx * 2;
                     int dy = py + ty + y;
                     if ((unsigned)dx < AREA_W && (unsigned)dy < VIS_ROWS)
-                        g_sub[dy * SUB_STRIDE + dx] = ink;
+                        surf[dy * SUB_STRIDE + dx] = ink;
                 }
             }
         }
@@ -161,12 +166,11 @@ void text_clear(void)
     memset(g_sub, PAL_UI_PANEL, SUB_STRIDE * VIS_ROWS);
 }
 
-void text_draw(int col, int row, const char *utf8, uint16_t color)
+// The shared grid renderer. `surf` is whichever shadow buffer the caller wants
+// the text written into.
+static void draw_text_on(uint8_t *surf, int col, int row, const char *utf8,
+                         uint8_t ink)
 {
-    if (!g_sub)
-        g_sub = text_sub_buffer();
-    uint8_t ink = (uint8_t)color;
-
     int px = col * CELL_W;
     int py = row * CELL_H;
     const char *s = utf8;
@@ -188,7 +192,7 @@ void text_draw(int col, int row, const char *utf8, uint16_t color)
         int idx = glyph_index_cached(cp);
         if (idx >= 0)
         {
-            draw_glyph(idx, px, py, ink);
+            draw_glyph(surf, idx, px, py, ink);
             px += CELL_W;
         }
         else
@@ -199,14 +203,30 @@ void text_draw(int col, int row, const char *utf8, uint16_t color)
             {
                 int dx = px + i, dy = py + 2;
                 if ((unsigned)dx < AREA_W && (unsigned)dy < VIS_ROWS)
-                    g_sub[dy * SUB_STRIDE + dx] = ink;
+                    surf[dy * SUB_STRIDE + dx] = ink;
                 dy = py + 11;
                 if ((unsigned)dx < AREA_W && (unsigned)dy < VIS_ROWS)
-                    g_sub[dy * SUB_STRIDE + dx] = ink;
+                    surf[dy * SUB_STRIDE + dx] = ink;
             }
             px += CELL_W;
         }
     }
+}
+
+void text_draw(int col, int row, const char *utf8, uint16_t color)
+{
+    if (!g_sub)
+        g_sub = text_sub_buffer();
+    draw_text_on(g_sub, col, row, utf8, (uint8_t)color);
+}
+
+// The top-screen counterpart. It deliberately does NOT clear the surface: the
+// world was just drawn there and the HUD is an overlay on top of it.
+void top_text_draw(int col, int row, const char *utf8, uint16_t color)
+{
+    if (!g_main)
+        g_main = text_main_buffer();
+    draw_text_on(g_main, col, row, utf8, (uint8_t)color);
 }
 
 void text_printf(int col, int row, uint16_t color, const char *fmt, ...)
@@ -253,9 +273,9 @@ void text_flush(void)
 // ---------------------------------------------------------------------------
 // Sub-screen shape drawing
 //
-// The HUD lives on the bottom screen, but the gfx_* helpers in render.c draw
-// into the main-screen buffer. These are the sub-screen equivalents so HUD
-// elements never bleed onto the game world.
+// The menus live on the bottom screen, but the gfx_* helpers in render.c draw
+// into the main-screen buffer at WORLD coordinates. These are the sub-screen
+// equivalents so menu elements never bleed onto the game world.
 // ---------------------------------------------------------------------------
 
 void sub_fill_rect(int x, int y, int w, int h, uint8_t color)
@@ -278,4 +298,45 @@ void sub_rect_outline(int x, int y, int w, int h, uint8_t color)
     sub_fill_rect(x, y + h - 1, w, 1, color);
     sub_fill_rect(x, y, 1, h, color);
     sub_fill_rect(x + w - 1, y, 1, h, color);
+}
+
+// ---------------------------------------------------------------------------
+// Top-screen shape drawing
+//
+// The play HUD (hearts, level, experience) sits on the top screen over the
+// world, so it needs the same three primitives against the main buffer. These
+// take SCREEN coordinates -- unlike gfx_*, which subtract the camera -- because
+// a HUD must not scroll with the world.
+// ---------------------------------------------------------------------------
+
+void top_fill_rect(int x, int y, int w, int h, uint8_t color)
+{
+    if (!g_main)
+        g_main = text_main_buffer();
+    if (w <= 0 || h <= 0)
+        return;
+    int x0 = x < 0 ? 0 : x;
+    int y0 = y < 0 ? 0 : y;
+    int x1 = x + w > AREA_W ? AREA_W : x + w;
+    int y1 = y + h > VIS_ROWS ? VIS_ROWS : y + h;
+    for (int j = y0; j < y1; j++)
+        memset(g_main + j * SUB_STRIDE + x0, color, x1 - x0);
+}
+
+void top_rect_outline(int x, int y, int w, int h, uint8_t color)
+{
+    top_fill_rect(x, y, w, 1, color);
+    top_fill_rect(x, y + h - 1, w, 1, color);
+    top_fill_rect(x, y, 1, h, color);
+    top_fill_rect(x + w - 1, y, 1, h, color);
+}
+
+void top_text_printf(int col, int row, uint16_t color, const char *fmt, ...)
+{
+    char buf[256];
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, args);
+    va_end(args);
+    top_text_draw(col, row, buf, color);
 }

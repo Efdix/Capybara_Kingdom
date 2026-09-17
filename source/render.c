@@ -536,6 +536,13 @@ uint8_t *text_sub_buffer(void)
     return g_sub_bmp;
 }
 
+// The main-screen shadow buffer, same idea. The play HUD draws into this one so
+// it lands on the top screen, on top of the world render_world() just wrote.
+uint8_t *text_main_buffer(void)
+{
+    return g_main_bmp;
+}
+
 // ---------------------------------------------------------------------------
 // Card art (tools/gen_cards.py)
 //

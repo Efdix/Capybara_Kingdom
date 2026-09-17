@@ -45,6 +45,13 @@
 #define WORLD_W       (WORLD_COLS * TILE_PX)
 #define WORLD_H       (WORLD_ROWS * TILE_PX)
 
+// Height of the vitals band (hearts, level, experience) along the top of the
+// main screen, plus the frame line under it. Anything else that wants the top
+// edge of that screen -- the off-screen boss marker, for one -- has to start
+// below this or it is drawn and then covered.
+#define VITALS_H      32
+#define VITALS_BAND   (VITALS_H + 2)
+
 // Sprites are stored as a contiguous blob of 16x16 tiles, so the byte offset of
 // tile `id` is a shift rather than a multiply.
 #define TILE_BYTES    (TILE_PX * TILE_PX)     // 256 bytes per 16x16 tile
@@ -445,10 +452,19 @@ void text_draw(int col, int row, const char *utf8, uint16_t color);
 void text_printf(int col, int row, uint16_t color, const char *fmt, ...);
 void text_panel(int col, int row, int w, int h);
 void text_flush(void);
-// Sub-screen shape drawing: the HUD lives on the bottom screen, so it must not
-// use the main-screen gfx_* helpers.
+// Sub-screen shape drawing: the menus live on the bottom screen, so they must
+// not use the main-screen gfx_* helpers.
 void sub_fill_rect(int x, int y, int w, int h, uint8_t color);
 void sub_rect_outline(int x, int y, int w, int h, uint8_t color);
+
+// Top-screen text and shapes. Same grid and the same pixel coordinates as the
+// sub versions, but written into the main buffer so the play HUD can sit over
+// the world. There is no top_text_clear() on purpose: the world has just been
+// drawn there and must not be wiped.
+void top_text_draw(int col, int row, const char *utf8, uint16_t color);
+void top_text_printf(int col, int row, uint16_t color, const char *fmt, ...);
+void top_fill_rect(int x, int y, int w, int h, uint8_t color);
+void top_rect_outline(int x, int y, int w, int h, uint8_t color);
 
 // input.c -- single entry point for key AND touch state.
 //
