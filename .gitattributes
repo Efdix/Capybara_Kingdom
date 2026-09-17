@@ -1,0 +1,12 @@
+# Check text files out with LF on every platform. build.sh and the Makefile
+# carry CR into their paths and recipe lines if they pick one up, so the build
+# would break on a clone made with core.autocrlf enabled.
+* text=auto eol=lf
+
+# Generated assets: never normalise, never diff
+*.nds  binary
+*.bin  binary
+*.wav  binary
+*.mod  binary
+*.png  binary
+*.gif  binary

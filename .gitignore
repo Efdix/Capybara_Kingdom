@@ -1,0 +1,18 @@
+# Build output (the ROM itself is the deliverable, so it is NOT ignored)
+build/
+compile_commands.json
+*.sav
+
+# Development-only autoplay ROMs (rebuilt with ./build.sh --autoplay etc.)
+autoplay.nds
+menu.nds
+ending.nds
+tap.nds
+boss.nds
+
+# Python bytecode cache from tools/
+__pycache__/
+*.pyc
+
+# Editor/tool session state
+.zcode/
