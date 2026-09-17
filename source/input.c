@@ -81,7 +81,8 @@ typedef struct {
     uint16_t keys;
 } AutoplayStep;
 
-// Sequence: title -> mode select -> hub -> region intro -> survival, then move
+// Sequence: title menu -> character select -> mode select -> hub -> region
+// intro -> survival, then move
 // around long enough to level up and pick cards.
 //
 // The game is a survivors-like now, so there is no attack button to press:
@@ -100,7 +101,9 @@ typedef struct {
 #ifdef AUTOPLAY_TAP_CARD
 static const AutoplayStep script[] = {
     {  50, 0 },
-    {   3, KEY_A },             // title -> mode select
+    {   3, KEY_A },             // title menu -> character select
+    {  20, 0 },
+    {   3, KEY_A },             // character select -> mode select
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub (single player)
     {  60, 0 },
@@ -122,7 +125,9 @@ static const AutoplayStep script[] = {
 #else
 static const AutoplayStep script[] = {
     {  50, 0 },
-    {   3, KEY_A },             // title -> mode select
+    {   3, KEY_A },             // title menu -> character select
+    {  20, 0 },
+    {   3, KEY_A },             // character select -> mode select
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub (single player)
     {  60, 0 },
@@ -152,7 +157,9 @@ static const AutoplayStep script[] = {
 // pokes the debug shortcut, so this exercises the real progression path.
 static const AutoplayStep script[] = {
     {  60, 0 },
-    {   3, KEY_A },             // title -> mode select
+    {   3, KEY_A },             // title menu -> character select
+    {  20, 0 },
+    {   3, KEY_A },             // character select -> mode select
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub
     {  40, 0 },
@@ -198,7 +205,9 @@ static const AutoplayStep script[] = {
 // five regions first would make this check slow and prone to flaking.
 static const AutoplayStep script[] = {
     {  60, 0 },
-    {   3, KEY_A },             // title -> mode select
+    {   3, KEY_A },             // title menu -> character select
+    {  20, 0 },
+    {   3, KEY_A },             // character select -> mode select
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub
     {  40, 0 },
@@ -210,7 +219,9 @@ static const AutoplayStep script[] = {
 #else
 static const AutoplayStep script[] = {
     {  90, 0 },                 // let the title settle
-    {   3, KEY_A },             // title -> mode select
+    {   3, KEY_A },             // title menu -> character select
+    {  20, 0 },
+    {   3, KEY_A },             // character select -> mode select
     {  30, 0 },
     {   3, KEY_A },             // mode select -> single-player hub
     // The hub is a screen worth verifying on its own (it binds the hub world
