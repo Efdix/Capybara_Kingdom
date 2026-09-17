@@ -52,6 +52,15 @@
 #define VITALS_H      32
 #define VITALS_BAND   (VITALS_H + 2)
 
+// The ultimate button on the bottom screen. It sits in the gap between the
+// minimap (which ends at y 113) and the four touch slots (which start at 148),
+// and game.c uses this one rectangle for both drawing and hit-testing so the
+// two cannot drift apart.
+#define ULT_BTN_X     152
+#define ULT_BTN_Y     114
+#define ULT_BTN_W      96
+#define ULT_BTN_H      30
+
 // Sprites are stored as a contiguous blob of 16x16 tiles, so the byte offset of
 // tile `id` is a shift rather than a multiply.
 #define TILE_BYTES    (TILE_PX * TILE_PX)     // 256 bytes per 16x16 tile
@@ -75,6 +84,11 @@ typedef enum {
     ST_ENDING,          // the cake is baked
     ST_CREDITS,
     ST_SKILL_TREE,      // passive skill tree menu
+    // Appended rather than inserted: g_state is mirrored over the link as a raw
+    // byte (net.c), so shifting the earlier values is safe only as long as both
+    // consoles run the same build -- which is not something to rely on.
+    ST_CHAR_SELECT,     // which capybara the local player controls
+    ST_SETTINGS,        // music and effect volume
 } GameState;
 
 // ---------------------------------------------------------------------------
@@ -150,6 +164,13 @@ extern const CardDef g_card_defs[CARD_COUNT];
 #define HERO_MAX_HEARTS   12
 #define HERO_BASE_SPEED   3
 
+// Ultimate charge. Every kill credits every active capybara rather than only
+// whoever landed the blow, so a pair charges at the same rate and the combined
+// release is something both players can actually aim for.
+#define ULT_CHARGE_MAX    28     // kills banked per ultimate
+// How close together two releases must be to count as a combined one.
+#define ULT_COMBO_WINDOW  40
+
 #define DIR_DOWN        0
 #define DIR_UP          1
 #define DIR_LEFT        2
@@ -203,6 +224,16 @@ typedef struct {
     uint8_t  water_orbs_max;   // max orbiting orbs based on card level
     uint16_t orb_regen_timer;  // frames until 1 orb restored
     uint8_t  orb_angle;        // rotation angle (0..255)
+
+    // --- ultimate (大招) ---
+    // Charged by kills rather than by a clock, so releasing one is something
+    // the player earns by fighting. The male and the female do different
+    // things with it; see hero_release_ultimate().
+    uint16_t ult_charge;       // kills banked toward the next ultimate
+    bool     ult_ready;        // charge is full and waiting to be spent
+    uint16_t ult_flash;        // >0 while the release effect plays
+    uint16_t ult_window;       // >0 briefly after releasing; the partner
+                               // releasing inside this window makes it a combo
 
     // --- derived stats, recomputed whenever a card is taken ---
     uint16_t move_speed;
@@ -488,6 +519,11 @@ void draw_monster(int index);
 void draw_gem(int index);
 int  monster_draw_radius(const Monster *m);
 
+// game.c -- ultimates. Charged by kills, released by the local player; the
+// host is authoritative for its own release and for the remote one it is told
+// about over the link, so hero_release_ultimate() is also called from net.c.
+void hero_release_ultimate(int index);
+
 // audio.c
 #define MUS_TITLE     0
 #define MUS_FIELD     1
@@ -501,6 +537,15 @@ void audio_init(void);
 void audio_play_music(int module_id);
 void audio_stop_music(void);
 void audio_play_sfx(int sfx_id);
+
+// Volume levels are steps, not a slider -- the settings screen is driven by a
+// d-pad. 0 is silent, AUDIO_VOL_MAX is full.
+#define AUDIO_VOL_LEVELS  4
+#define AUDIO_VOL_MAX     (AUDIO_VOL_LEVELS - 1)
+void audio_set_music_volume(int level);
+void audio_set_sfx_volume(int level);
+int  audio_get_music_volume(void);
+int  audio_get_sfx_volume(void);
 
 // Sound effect ids, in the order gen_audio.py emits them.
 #define SND_UI_MOVE       0
@@ -559,3 +604,6 @@ bool net_start_client(void);
 void net_update(void);
 void net_shutdown(void);
 bool net_ready(void);
+// Tells the host that this console released its ultimate. Only meaningful on
+// the client side of a live link; a no-op otherwise.
+void net_notify_ultimate(void);

@@ -395,6 +395,30 @@ static void monster_die(Monster *m)
                       m->is_boss ? (int)(300 + g_region_id * 120)
                                  : (int)monster_def(m->def_id)->exp_reward);
 
+    // Ultimates charge off kills, and every active capybara is credited -- a
+    // pair charges together, so the combined release is reachable on purpose
+    // rather than by luck. Bosses are worth a burst on their own.
+    int ult_gain = m->is_boss ? 8 : 1;
+    for (int i = 0; i < 2; i++)
+    {
+        Hero *uh = &g_heroes[i];
+        if (!uh->active || uh->ult_ready)
+            continue;
+        uh->ult_charge = (uint16_t)(uh->ult_charge + ult_gain);
+        if (uh->ult_charge >= ULT_CHARGE_MAX)
+        {
+            uh->ult_charge = ULT_CHARGE_MAX;
+            uh->ult_ready = true;
+            if (i == g_local_hero)
+            {
+                audio_play_sfx(SND_LEVELUP);
+                int32_t hx, hy;
+                hero_center(uh, &hx, &hy);
+                spawn_effect(FX_LEVELUP, hx, hy, 40, 22);
+            }
+        }
+    }
+
     // An experience mote, plus an ingredient drop on a fraction of kills, so
     // the boss gate is a matter of surviving long enough rather than of
     // grinding one particular enemy type.
@@ -733,6 +757,132 @@ void hero_cast_slot(int index, int slot)
 
 static int s_touch_drag_from = -1;
 
+// ---------------------------------------------------------------------------
+// Ultimates (大招)
+//
+// Charged by kills, released with R or by tapping the button on the bottom
+// screen. The two capybaras do different things with it, because the two cards
+// being identical would waste the fact that they are different characters:
+//
+//   公水豚  怒涛冲击   a shockwave that tears through everything on screen
+//   母水豚  温柔庇护   heals to full, calms the field, gathers every drop
+//
+// If both capybaras release inside ULT_COMBO_WINDOW frames of each other the
+// second one lands as 水豚合击 instead: both effects plus a stun, which is what
+// makes playing as a pair worth more than playing as two solos.
+// ---------------------------------------------------------------------------
+
+// Everything hostile within roughly one screen of the capybara. The ultimate is
+// a way out of a crowd you are already in, not a way to clear the map from a
+// corner, so it deliberately does not reach further than the camera does.
+static bool ult_in_reach(int32_t cx, int32_t cy, int32_t mx, int32_t my)
+{
+    return iabs(mx - cx) <= AREA_W / 2 + 32 &&
+           iabs(my - cy) <= AREA_H / 2 + 32;
+}
+
+static void ult_shockwave(int32_t cx, int32_t cy, int damage)
+{
+    spawn_effect(FX_TAIL, cx, cy, 60, 128);
+
+    for (int i = 0; i < MAX_MONSTERS; i++)
+    {
+        Monster *m = &g_monsters[i];
+        if (!m->alive || !monster_is_hostile(m))
+            continue;
+        int32_t mx, my;
+        monster_center(m, &mx, &my);
+        if (!ult_in_reach(cx, cy, mx, my))
+            continue;
+        damage_monster(m, m->is_boss ? damage * 2 : damage, cx, cy, true);
+    }
+}
+
+static void ult_shelter(int index, int32_t cx, int32_t cy, int calm_frames)
+{
+    Hero *h = &g_heroes[index];
+    h->hearts = h->hearts_max;
+    h->invuln = 90;
+    spawn_effect(FX_PACIFY, cx, cy, 60, 128);
+
+    for (int i = 0; i < MAX_MONSTERS; i++)
+    {
+        Monster *m = &g_monsters[i];
+        if (!m->alive || !monster_is_hostile(m) || m->is_boss)
+            continue;
+        int32_t mx, my;
+        monster_center(m, &mx, &my);
+        if (!ult_in_reach(cx, cy, mx, my))
+            continue;
+        // 安抚's own effect, at a strength the card cannot reach: the ultimate
+        // is meant to buy real breathing room.
+        m->pacify_timer = (uint16_t)calm_frames;
+    }
+    vacuum_all_gems(cx, cy);
+}
+
+void hero_release_ultimate(int index)
+{
+    Hero *h = &g_heroes[index];
+    if (!h->active || !h->ult_ready)
+        return;
+
+    h->ult_ready = false;
+    h->ult_charge = 0;
+    h->ult_flash = 30;
+
+    int32_t cx, cy;
+    hero_center(h, &cx, &cy);
+
+    // A combo is the partner having released a moment ago -- the window is
+    // short enough that it has to be deliberate, not accidental.
+    int partner = index ^ 1;
+    bool combo = g_heroes[partner].active && g_heroes[partner].ult_window > 0;
+    h->ult_window = ULT_COMBO_WINDOW;
+
+    if (combo)
+    {
+        audio_play_sfx(SND_EXPLOSION);
+        // Both halves of the pair's kit, plus the stun neither one has alone.
+        ult_shockwave(cx, cy, 90);
+        ult_shelter(index, cx, cy, 420);
+        for (int i = 0; i < MAX_MONSTERS; i++)
+        {
+            Monster *m = &g_monsters[i];
+            if (!m->alive || !monster_is_hostile(m) || m->is_boss)
+                continue;
+            int32_t mx, my;
+            monster_center(m, &mx, &my);
+            if (!ult_in_reach(cx, cy, mx, my))
+                continue;
+            m->state = 1;
+            m->state_timer = 120;
+        }
+        return;
+    }
+
+    audio_play_sfx(SND_MAGIC_ICE);
+    if (h->variant & 1)
+        ult_shelter(index, cx, cy, 300);
+    else
+        ult_shockwave(cx, cy, 60);
+
+    // In a linked game the host owns monster simulation, so a client release
+    // has to be applied over there. Harmless outside a session: net.c ignores
+    // it unless this console is the client half of a live link.
+    net_notify_ultimate();
+}
+
+// Charge accrual and the combo window both tick on the game clock.
+static void hero_update_ultimate(int index)
+{
+    Hero *h = &g_heroes[index];
+    if (h->ult_flash > 0)
+        h->ult_flash--;
+    if (h->ult_window > 0)
+        h->ult_window--;
+}
+
 static void hero_handle_active_skills(int index)
 {
     Hero *h = &g_heroes[index];
@@ -742,19 +892,31 @@ static void hero_handle_active_skills(int index)
     uint16_t down = input_down();
     uint16_t held = input_held();
 
-    // 1. Hardware Buttons: A, B, X, Y (plus shoulder triggers L/R)
+    // 1. Hardware Buttons: A, B, X, Y (plus L for B). R belongs to the
+    //    ultimate, which is a different kind of decision from the four slots --
+    //    it is the one button that is always worth saving.
     if (down & KEY_A)
         hero_cast_slot(index, SKILL_SLOT_A);
     if (down & (KEY_B | KEY_L))
         hero_cast_slot(index, SKILL_SLOT_B);
     if (down & KEY_X)
         hero_cast_slot(index, SKILL_SLOT_X);
-    if ((down & (KEY_Y | KEY_R)) || ((held & (KEY_Y | KEY_R)) && (g_frame % 20 == 0)))
+    if ((down & KEY_Y) || ((held & KEY_Y) && (g_frame % 20 == 0)))
         hero_cast_slot(index, SKILL_SLOT_Y);
 
+    if (down & KEY_R)
+        hero_release_ultimate(index);
+
     // 2. Touch Screen: tap slot box to cast, drag to another slot to swap!
+    //    The ultimate has its own button above the bar (see hud_draw).
     if (input_touch_pressed())
     {
+        if (input_touch_in(ULT_BTN_X, ULT_BTN_Y, ULT_BTN_W, ULT_BTN_H))
+        {
+            hero_release_ultimate(index);
+            return;
+        }
+
         for (int s = 0; s < 4; s++)
         {
             int sx = 4 + s * 62;
@@ -2659,6 +2821,50 @@ static void hud_draw(void)
     if (shown == 0)
         text_draw(1, 4, "升级就能获得卡牌", PAL_UI_TEXT_DIM);
 
+    // The ultimate button, in the gap between the map and the touch bar. It is
+    // big on purpose: it is the one control the player reaches for without
+    // looking, and the only thing on this screen that changes state when it
+    // becomes usable.
+    //
+    // Everything is placed in pixels rather than on the text grid: a glyph is
+    // 16px tall on a 14px cell pitch, so a two-row block is 30px and would not
+    // have fitted between the map and the touch bar.
+    {
+        Hero *hu = &g_heroes[g_local_hero];
+        bool ready = hu->ult_ready;
+
+        uint8_t frame = ready ? PAL_UI_GOLD_LIGHT : PAL_OUTLINE;
+        if (ready && ((g_frame >> 3) & 1))
+            frame = PAL_WHITE_SPARK;   // pulses so a full bar is seen peripherally
+
+        sub_rect_outline(ULT_BTN_X, ULT_BTN_Y, ULT_BTN_W, ULT_BTN_H, frame);
+        sub_fill_rect(ULT_BTN_X + 1, ULT_BTN_Y + 1, ULT_BTN_W - 2, ULT_BTN_H - 2,
+                      ready ? PAL_UI_PANEL : PAL_GREY_DARK);
+
+        // Charge meter, same left-to-right fill as the experience bar.
+        int bx = ULT_BTN_X + 6;
+        int by = ULT_BTN_Y + 4;
+        int bw = ULT_BTN_W - 12;
+        sub_rect_outline(bx, by, bw, 8, PAL_OUTLINE);
+        sub_fill_rect(bx + 1, by + 1, bw - 2, 6, PAL_UI_PANEL);
+        if (ready)
+        {
+            sub_fill_rect(bx + 1, by + 1, bw - 2, 6, PAL_UI_GOLD_LIGHT);
+        }
+        else
+        {
+            int cw = ((bw - 2) * hu->ult_charge) / ULT_CHARGE_MAX;
+            if (cw > 0)
+                sub_fill_rect(bx + 1, by + 1, cw, 6, PAL_PURPLE_LIGHT);
+        }
+
+        if (ready)
+            text_draw(13, 9, "按R释放", PAL_UI_GOLD_LIGHT);
+        else
+            text_printf(13, 9, PAL_UI_TEXT_DIM, "大招%d/%d",
+                        (int)hu->ult_charge, ULT_CHARGE_MAX);
+    }
+
     // Active Skill Slots Touch Bar (y: 154..186)
     Hero *hl = &g_heroes[g_local_hero];
     static const char *s_hud_btn_names[4] = { "A", "B", "X", "Y" };
@@ -2751,6 +2957,8 @@ void game_update(void)
     // Capybaras first: their new positions matter for monster targeting.
     hero_update(0);
     hero_update(1);
+    hero_update_ultimate(0);
+    hero_update_ultimate(1);
 
     // The host owns monster simulation; in single player the local console
     // always is the authority.
@@ -2934,7 +3142,8 @@ void game_start_hub(void)
     Hero *h0 = &g_heroes[0];
     h0->active = true;
     h0->remote = false;
-    h0->variant = 0;
+    // h0->variant is deliberately NOT set here: the character-select screen
+    // picked it, and this runs on every return to the hub.
     h0->x = WORLD_W / 2;
     h0->y = WORLD_H / 2;
     h0->facing = DIR_DOWN;
@@ -2947,7 +3156,8 @@ void game_start_hub(void)
     {
         Hero *h1 = &g_heroes[1];
         h1->active = true;
-        h1->variant = 1;
+        // The partner is always the capybara the local player did not pick.
+        h1->variant = g_heroes[0].variant ^ 1;
         h1->x = WORLD_W / 2 + 32;
         h1->y = WORLD_H / 2;
         h1->facing = DIR_DOWN;

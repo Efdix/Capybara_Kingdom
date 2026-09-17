@@ -211,3 +211,48 @@ void audio_play_sfx(int sfx_id)
         return;
     mmEffect(g_samples[sfx_id].sample);
 }
+
+// Volume, as coarse steps rather than a slider: the settings screen is driven
+// by a d-pad, and maxmod's own scale is 0..1024. Lives here rather than in the
+// menu so the mapping to maxmod is in one place.
+static int g_music_vol = AUDIO_VOL_MAX;
+static int g_sfx_vol = AUDIO_VOL_MAX;
+
+static int vol_to_maxmod(int level)
+{
+    if (level < 0)
+        level = 0;
+    if (level > AUDIO_VOL_MAX)
+        level = AUDIO_VOL_MAX;
+    return (level * 1024) / AUDIO_VOL_MAX;
+}
+
+void audio_set_music_volume(int level)
+{
+    if (level < 0)
+        level = 0;
+    if (level > AUDIO_VOL_MAX)
+        level = AUDIO_VOL_MAX;
+    g_music_vol = level;
+    mmSetModuleVolume((mm_word)vol_to_maxmod(level));
+}
+
+void audio_set_sfx_volume(int level)
+{
+    if (level < 0)
+        level = 0;
+    if (level > AUDIO_VOL_MAX)
+        level = AUDIO_VOL_MAX;
+    g_sfx_vol = level;
+    mmSetEffectsVolume((mm_word)vol_to_maxmod(level));
+}
+
+int audio_get_music_volume(void)
+{
+    return g_music_vol;
+}
+
+int audio_get_sfx_volume(void)
+{
+    return g_sfx_vol;
+}

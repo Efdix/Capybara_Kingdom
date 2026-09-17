@@ -54,6 +54,10 @@ typedef struct {
     uint8_t  moving;
     uint8_t  attack;
     uint8_t  alive;
+    // The client releases its own ultimate and asks the host to apply it: the
+    // host owns monster simulation, so it is the only side that can actually
+    // damage anything. Non-zero for a few frames around the press.
+    uint8_t  ult_fire;
 } pkt_hero;
 
 // Host -> client: region state + every monster + every projectile.
@@ -68,7 +72,12 @@ typedef struct {
     uint8_t  projectile_count;
     uint16_t run_time;
     uint8_t  difficulty;
-    uint8_t  _pad;
+    // Ultimate charge, which the client cannot work out for itself: it does not
+    // simulate monsters, so it never sees the kills that fill the bar. Bit 0 of
+    // ult_ready is the host's own capybara, bit 1 the partner's.
+    uint8_t  ult_ready;
+    uint8_t  ult_charge_self;   // the host console's own capybara
+    uint8_t  ult_charge_peer;   // the partner's
 } pkt_world_hdr;
 
 typedef struct {
@@ -98,6 +107,16 @@ static bool g_net_host = false;
 static int  g_tick = 0;
 static Wifi_AccessPoint g_ap;
 
+// Frames left to keep telling the host to release this console's ultimate. The
+// press itself is a single frame, but a reply can be lost, so it is repeated
+// briefly rather than sent once.
+static uint8_t s_ult_fire = 0;
+
+void net_notify_ultimate(void)
+{
+    s_ult_fire = 8;
+}
+
 // ---------------------------------------------------------------------------
 // Host side
 // ---------------------------------------------------------------------------
@@ -119,6 +138,13 @@ static void host_send_world(void)
     hdr->game_state = (uint8_t)g_state;
     hdr->run_time = g_run_time;
     hdr->difficulty = g_difficulty;
+
+    // The client cannot see kills, so it cannot fill its own ultimate bar; it
+    // is told instead, per capybara.
+    hdr->ult_ready = (uint8_t)((g_heroes[0].ult_ready ? 1 : 0) |
+                               (g_heroes[1].ult_ready ? 2 : 0));
+    hdr->ult_charge_self = (uint8_t)g_heroes[g_local_hero].ult_charge;
+    hdr->ult_charge_peer = (uint8_t)g_heroes[g_local_hero ^ 1].ult_charge;
 
     uint8_t *p = buf + sizeof(pkt_world_hdr);
 
@@ -215,6 +241,12 @@ static void host_rx_from_client(Wifi_MPPacketType type, int aid, int base,
     r->hearts_max = pkt.hearts_max;
     r->level = pkt.level;
     r->active = pkt.alive != 0;
+
+    // The client asked to release; the host owns monsters, so it applies the
+    // effect here. Charge and the combo window are the host's to track, exactly
+    // as they are for its own capybara.
+    if (pkt.ult_fire)
+        hero_release_ultimate(1);
 }
 
 #else
@@ -248,6 +280,7 @@ static void client_send_hero(void)
     pkt.moving = h->moving;
     pkt.attack = h->bite_timer > 0;
     pkt.alive = h->active;
+    pkt.ult_fire = s_ult_fire ? 1 : 0;
     Wifi_MultiplayerClientReplyTxFrame(&pkt, sizeof(pkt));
 #endif
 }
@@ -272,6 +305,13 @@ static void client_apply_world_packet(const uint8_t *buf, int len)
     // mirrored, because the host owns the run.
     if (g_state != ST_CARD_PICK)
         g_state = (GameState)hdr->game_state;
+
+    // Ultimate charge comes from the host, which is the only side that sees
+    // kills. The host's own capybara is this console's partner, and vice versa.
+    g_heroes[1].ult_charge = hdr->ult_charge_self;
+    g_heroes[1].ult_ready = (hdr->ult_ready & 1) != 0;
+    g_heroes[0].ult_charge = hdr->ult_charge_peer;
+    g_heroes[0].ult_ready = (hdr->ult_ready & 2) != 0;
 
     const uint8_t *p = buf + sizeof(pkt_world_hdr);
 
@@ -409,6 +449,9 @@ void net_update(void)
         return;
 
     g_tick++;
+
+    if (s_ult_fire > 0)
+        s_ult_fire--;
 
     if (g_net_host)
     {

@@ -84,6 +84,12 @@ static void draw_title(void)
                   cx + 46, base_y - 2, false, true);
 }
 
+static const char *title_items[] = {
+    "开始游戏",
+    "设置",
+};
+#define TITLE_COUNT 2
+
 static void title_screen(void)
 {
     // The title is drawn in SCREEN space, not world space: it is its own
@@ -93,14 +99,128 @@ static void title_screen(void)
     render_camera(0, 0);
     draw_title();
     text_clear();
-    text_panel(2, 3, 16, 3);
-    text_draw(4, 4, "水豚生存", PAL_UI_GOLD_LIGHT);
-    text_draw(3, 5, "生日蛋糕大冒险", PAL_UI_TEXT);
-    text_draw(4, 9, "按 A 开始", PAL_WHITE_SPARK);
+    text_panel(2, 1, 16, 3);
+    text_draw(4, 2, "水豚生存", PAL_UI_GOLD_LIGHT);
+    text_draw(3, 3, "生日蛋糕大冒险", PAL_UI_TEXT);
+
     if (g_ingredients_done == (1 << INGREDIENT_COUNT) - 1)
-        text_draw(3, 7, "材料已集齐！", PAL_GREEN_SPARK);
+        text_draw(3, 5, "材料已集齐！", PAL_GREEN_SPARK);
+
+    text_panel(6, 7, 8, 4);
+    for (int i = 0; i < TITLE_COUNT; i++)
+    {
+        bool sel = (i == g_menu_cursor);
+        text_printf(6, 8 + i * 2, sel ? PAL_WHITE_SPARK : PAL_UI_TEXT_DIM,
+                    "%s%s", sel ? "> " : "  ", title_items[i]);
+    }
+
+    text_draw(1, 12, "上下选择 A确定 START制作名单", PAL_UI_TEXT_DIM);
 
     audio_play_music(MUS_TITLE);
+}
+
+// ---------------------------------------------------------------------------
+// Character select
+// ---------------------------------------------------------------------------
+
+// The two capybaras. Which one you pick is not cosmetic: their ultimates do
+// different things (see hero_release_ultimate), so this is where the run's
+// shape gets decided.
+static const char *char_names[2] = {
+    "阿棕（公）",
+    "阿奶（母）",
+};
+
+static const char *char_ult[2] = {
+    "大招 · 怒涛冲击\n扫倒身边一圈敌人，清出退路",
+    "大招 · 温柔庇护\n回满血、安抚全场、吸走所有掉落",
+};
+
+static void char_select_screen(void)
+{
+    // Top screen: the real sprites at 2x, so the fur, the belly and the head
+    // accessory are legible enough to choose on.
+    render_camera(0, 0);
+    gfx_fill_rect(0, 0, AREA_W, AREA_H, PAL_UI_PANEL);
+    gfx_fill_rect(0, 0, AREA_W, 18, PAL_PURPLE_DARK);
+
+    for (int i = 0; i < 2; i++)
+    {
+        const uint8_t *sheet = (i == 0) ? hero_m_tiles_bin : hero_f_tiles_bin;
+        bool sel = (i == g_menu_cursor);
+        int x = 24 + i * 112;
+
+        gfx_fill_rect(x, 42, 96, 104, sel ? PAL_UI_FRAME : PAL_GREY_DARK);
+        gfx_fill_rect(x + 3, 45, 90, 98, PAL_UI_PANEL);
+        gfx_blit_8bpp_scaled(sheet, HERO_W, HERO_H, DIR_DOWN * HERO_FRAMES,
+                             x + 16, 62, false, false, 200);
+
+        if (sel)
+        {
+            // A caret over the chosen one; the frame alone is too quiet at a
+            // glance and this screen is the only place a choice like this is
+            // ever made.
+            for (int k = 0; k < 6; k++)
+                gfx_fill_rect(x + 48 - 1 - k, 30 + k, 2 + k * 2, 2,
+                              PAL_UI_GOLD_LIGHT);
+        }
+    }
+
+    // Bottom screen: names, and what each one's ultimate actually does.
+    text_clear();
+    text_panel(1, 0, 18, 2);
+    text_draw(2, 0, "选择角色", PAL_UI_GOLD_LIGHT);
+    text_draw(13, 0, "左右选择", PAL_UI_TEXT_DIM);
+
+    for (int i = 0; i < 2; i++)
+    {
+        bool sel = (i == g_menu_cursor);
+        text_printf(2 + i * 10, 2, sel ? PAL_WHITE_SPARK : PAL_UI_TEXT_DIM,
+                    "%s%s", sel ? "> " : "  ", char_names[i]);
+    }
+
+    text_panel(1, 5, 18, 5);
+    text_draw(2, 6, char_ult[g_menu_cursor],
+              (g_menu_cursor == 0) ? PAL_ORANGE_MID : PAL_CYAN_LIGHT);
+    text_draw(2, 10, "左右选择 A确定 B返回", PAL_UI_TEXT_DIM);
+}
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+static const char *settings_items[] = {
+    "音乐",
+    "音效",
+    "返回",
+};
+#define SETTINGS_COUNT 3
+
+// Words rather than a bar: four steps is few enough to name, and a name is
+// unambiguous where a half-filled bar is not.
+static const char *vol_names[AUDIO_VOL_LEVELS] = { "关", "小", "中", "大" };
+
+static void settings_screen(void)
+{
+    text_clear();
+    text_panel(1, 1, 18, 9);
+    text_draw(2, 2, "设置", PAL_UI_GOLD_LIGHT);
+
+    for (int i = 0; i < SETTINGS_COUNT; i++)
+    {
+        bool sel = (i == g_menu_cursor);
+        text_printf(2, 4 + i * 2, sel ? PAL_WHITE_SPARK : PAL_UI_TEXT_DIM,
+                    "%s%s", sel ? "> " : "  ", settings_items[i]);
+
+        if (i == 0)
+            text_printf(13, 4, sel ? PAL_UI_GOLD_LIGHT : PAL_UI_TEXT_DIM,
+                        "%s", vol_names[audio_get_music_volume()]);
+        else if (i == 1)
+            text_printf(13, 6, sel ? PAL_UI_GOLD_LIGHT : PAL_UI_TEXT_DIM,
+                        "%s", vol_names[audio_get_sfx_volume()]);
+    }
+
+    text_draw(1, 11, "上下选择 左右调整 B返回", PAL_UI_TEXT_DIM);
 }
 
 // ---------------------------------------------------------------------------
@@ -322,14 +442,87 @@ int main(int argc, char *argv[])
             title_screen();
             if (fade < 16)
                 fade++;
+            if (down & KEY_UP)
+            {
+                g_menu_cursor = (g_menu_cursor + TITLE_COUNT - 1) % TITLE_COUNT;
+                audio_play_sfx(SND_UI_MOVE);
+            }
+            if (down & KEY_DOWN)
+            {
+                g_menu_cursor = (g_menu_cursor + 1) % TITLE_COUNT;
+                audio_play_sfx(SND_UI_MOVE);
+            }
             if (down & KEY_A)
             {
                 audio_play_sfx(SND_UI_CONFIRM);
-                g_state = ST_HUB;
-                game_start_hub();
+                if (g_menu_cursor == 0)
+                {
+                    g_menu_cursor = 0;
+                    g_state = ST_CHAR_SELECT;
+                }
+                else
+                {
+                    g_menu_cursor = 0;
+                    g_state = ST_SETTINGS;
+                }
             }
             if (down & KEY_START)
                 g_state = ST_CREDITS;
+            break;
+
+        case ST_CHAR_SELECT:
+            char_select_screen();
+            if (down & (KEY_LEFT | KEY_RIGHT))
+            {
+                g_menu_cursor ^= 1;
+                audio_play_sfx(SND_UI_MOVE);
+            }
+            if (down & KEY_B)
+            {
+                audio_play_sfx(SND_UI_CANCEL);
+                g_menu_cursor = 0;
+                g_state = ST_TITLE;
+            }
+            if (down & KEY_A)
+            {
+                audio_play_sfx(SND_UI_CONFIRM);
+                // The pick decides which capybara this console drives; when a
+                // partner joins they take the other one, so the pair is always
+                // one of each no matter which side chose first.
+                g_heroes[0].variant = (uint8_t)g_menu_cursor;
+                g_menu_cursor = 0;
+                g_state = ST_MODE_SELECT;
+            }
+            break;
+
+        case ST_SETTINGS:
+            settings_screen();
+            if (down & KEY_UP)
+            {
+                g_menu_cursor = (g_menu_cursor + SETTINGS_COUNT - 1) %
+                                SETTINGS_COUNT;
+                audio_play_sfx(SND_UI_MOVE);
+            }
+            if (down & KEY_DOWN)
+            {
+                g_menu_cursor = (g_menu_cursor + 1) % SETTINGS_COUNT;
+                audio_play_sfx(SND_UI_MOVE);
+            }
+            if (down & (KEY_LEFT | KEY_RIGHT))
+            {
+                int step = (down & KEY_RIGHT) ? 1 : -1;
+                if (g_menu_cursor == 0)
+                    audio_set_music_volume(audio_get_music_volume() + step);
+                else if (g_menu_cursor == 1)
+                    audio_set_sfx_volume(audio_get_sfx_volume() + step);
+                audio_play_sfx(SND_UI_MOVE);
+            }
+            if (down & (KEY_B | KEY_A))
+            {
+                audio_play_sfx(SND_UI_CANCEL);
+                g_menu_cursor = 0;
+                g_state = ST_TITLE;
+            }
             break;
 
         case ST_MODE_SELECT:
@@ -345,7 +538,11 @@ int main(int argc, char *argv[])
                 audio_play_sfx(SND_UI_MOVE);
             }
             if (down & KEY_B)
-                g_state = ST_TITLE;
+            {
+                audio_play_sfx(SND_UI_CANCEL);
+                g_menu_cursor = 0;
+                g_state = ST_CHAR_SELECT;
+            }
             if (down & KEY_A)
             {
                 audio_play_sfx(SND_UI_CONFIRM);
@@ -354,15 +551,18 @@ int main(int argc, char *argv[])
                     g_multiplayer = false;
                     g_state = ST_HUB;
                     g_menu_cursor = 0;
+                    game_start_hub();
                 }
                 else
                 {
                     g_multiplayer = true;
                     g_is_host = (g_menu_cursor == 1);
 
-                    // The partner takes the other capybara.
+                    // The partner always takes the capybara this console did
+                    // not: a pair is one of each, so both ultimates are always
+                    // in play and the combo is always available.
                     g_heroes[1].active = true;
-                    g_heroes[1].variant = 1;
+                    g_heroes[1].variant = g_heroes[0].variant ^ 1;
                     g_heroes[1].remote = true;
                     hero_recompute_stats(1);
                     g_heroes[1].x = WORLD_W / 2 + 8;
@@ -382,6 +582,7 @@ int main(int argc, char *argv[])
                         g_heroes[1].active = false;
                         g_state = ST_HUB;
                         g_menu_cursor = 0;
+                        game_start_hub();
                     }
                 }
             }
@@ -439,7 +640,7 @@ int main(int argc, char *argv[])
                     audio_play_sfx(SND_UI_CONFIRM);
                     g_multiplayer = true;
                     g_heroes[1].active = true;
-                    g_heroes[1].variant = 1;
+                    g_heroes[1].variant = g_heroes[0].variant ^ 1;
                     g_heroes[1].remote = true;
                     hero_recompute_stats(1);
                     g_state = ST_HUB;

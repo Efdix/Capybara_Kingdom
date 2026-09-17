@@ -93,10 +93,17 @@ ROM		:= $(NAME).nds
 # Runs the integrity checks in tools/verify_assets.py once per build, before the
 # generated .bin files are converted. It must be defined here rather than with
 # the generator settings above, because it depends on BUILDDIR.
+#
+# The sources are a dependency too, not just the generators: the font check
+# reads every .c/.h under source/ and fails if any Chinese character used by the
+# game is missing from the atlas. Keying only off the generators meant new text
+# could ship as empty boxes, because nothing re-ran the check that catches it.
 .PHONY: verify-assets
 verify-assets: $(BUILDDIR)/.assets-verified
 
-$(BUILDDIR)/.assets-verified: $(TOOLS)
+SOURCES_FOR_VERIFY := $(wildcard source/*.c source/*.h)
+
+$(BUILDDIR)/.assets-verified: $(TOOLS) $(SOURCES_FOR_VERIFY)
 	@echo "  VERIFY  assets"
 	@$(MKDIR) -p $(BUILDDIR)
 	@$(PYTHON) tools/verify_assets.py
