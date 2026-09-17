@@ -74,6 +74,16 @@ const uint8_t *area_prop(int area_id);
 #define HERO_DIRS     8
 #define HERO_FRAMES   16     // per direction: idle 4 / walk 6 / attack 4 / hurt 2
 
+// Enemies. One 32x32 sheet holds 15 mobs with 4 frames each; bosses are 64x64
+// with 4 frames each. A mob is drawn at its MonsterDef scale, so its on-screen
+// size is not fixed by these -- they are the source art's size.
+#define MOB_W         32
+#define MOB_H         32
+#define MOB_FRAMES    4
+#define BOSS_W        64
+#define BOSS_H        64
+#define BOSS_FRAMES   4
+
 
 // Character frame indices within a direction block. The sheet order is fixed by
 // tools/gen_heroes.py and must match these.

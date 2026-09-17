@@ -333,13 +333,20 @@ static void hero_gain_exp(int index, int amount)
 
     h->exp += (uint16_t)amount;
 
-    // Each level costs 35% more than the last. The curve is deliberately
-    // shallow so a run keeps handing out cards.
+    // Every level costs half again as much as the one before it, plus a flat
+    // step. The first level is a handful of kills; by the tenth a level is
+    // minutes of the run, so the card picker stays an event rather than a
+    // metronome, and the type you choose to fight starts to matter.
     while (h->exp >= h->exp_need)
     {
         h->exp -= h->exp_need;
         h->level++;
-        h->exp_need += (uint16_t)(h->exp_need * 35 / 100);
+
+        // exp_need is 16-bit, so the ramp has to stop somewhere. The cap is
+        // far past any level a run reaches; it only exists so the growth
+        // cannot wrap around and hand out cheap levels again.
+        uint32_t next = (uint32_t)h->exp_need + h->exp_need / 2 + 15;
+        h->exp_need = (next > 60000) ? 60000 : (uint16_t)next;
 
         // A level-up is a full heal, which is the only sustain besides 感化's
         // ultimate.
@@ -380,8 +387,13 @@ static void monster_die(Monster *m)
     int32_t cx, cy;
     monster_center(m, &cx, &cy);
 
+    // Experience is per type, so the brute that soaked ten hits is worth
+    // materially more than the swarm that died to one. That is what makes
+    // picking fights a decision instead of clearing whatever is nearest.
     if (g_local_hero < 2 && g_heroes[g_local_hero].active)
-        hero_gain_exp(g_local_hero, m->is_boss ? 120 : 8);
+        hero_gain_exp(g_local_hero,
+                      m->is_boss ? (int)(300 + g_region_id * 120)
+                                 : (int)monster_def(m->def_id)->exp_reward);
 
     // An experience mote, plus an ingredient drop on a fraction of kills, so
     // the boss gate is a matter of surviving long enough rather than of
@@ -1727,7 +1739,10 @@ static void monster_update(int index)
     }
 
     // Standing in mud stops movement for as long as the pool is underfoot.
-    int speed = (m->slow_timer > 0) ? 0 : 1;
+    // Speed is per type, which is what separates the pack that runs you down
+    // from the brute that only ever walks.
+    const MonsterDef *mdef = monster_def(m->def_id);
+    int speed = (m->slow_timer > 0) ? 0 : mdef->speed;
 
     int32_t cx, cy;
     monster_center(m, &cx, &cy);
@@ -1785,7 +1800,7 @@ static void monster_update(int index)
 
         if (dist2(cx, cy, hx, hy) < touch * touch && m->attack_timer == 0)
         {
-            hero_take_damage(hi, 1, cx, cy);
+            hero_take_damage(hi, mdef->damage, cx, cy);
             m->attack_timer = 45;
         }
         break;
@@ -1830,7 +1845,7 @@ static void monster_update(int index)
 
             if (dist2(cx, cy, hx, hy) < touch * touch && m->attack_timer == 0)
             {
-                hero_take_damage(hi, 1, cx, cy);
+                hero_take_damage(hi, mdef->damage, cx, cy);
                 m->attack_timer = 45;
             }
         }
@@ -1842,9 +1857,9 @@ static void monster_update(int index)
         // Keep a comfortable distance: retreat when too close, close in when
         // too far, fire on a timer that shortens as difficulty rises.
         if (d2 < 60 * 60)
-            monster_move_toward(m, cx * 2 - hx, cy * 2 - hy, 1);
+            monster_move_toward(m, cx * 2 - hx, cy * 2 - hy, speed);
         else if (d2 > 100 * 100)
-            monster_move_toward(m, hx, hy, 1);
+            monster_move_toward(m, hx, hy, speed);
 
         if (m->attack_timer == 0 && d2 < 140 * 140)
         {
@@ -1853,7 +1868,8 @@ static void monster_update(int index)
             len = len ? len : 1;
             spawn_projectile(PROJ_ENEMY, cx, cy,
                              (int16_t)((dx * 3) / len),
-                             (int16_t)((dy * 3) / len), 110, 1, 4);
+                             (int16_t)((dy * 3) / len), 110,
+                             mdef->damage, 4);
             int cd = 90 - g_difficulty * 5;
             m->attack_timer = (uint16_t)(cd < 30 ? 30 : cd);
             audio_play_sfx(SND_MAGIC_FIRE);
@@ -1918,7 +1934,7 @@ static void projectile_update(void)
                 hero_center(hero, &cx, &cy);
                 if (dist2(p->x, p->y, cx, cy) < 10 * 10)
                 {
-                    hero_take_damage(h, 1, p->x, p->y);
+                    hero_take_damage(h, p->power, p->x, p->y);
                     p->alive = false;
                     break;
                 }
@@ -2148,13 +2164,17 @@ static void spawn_monster(uint8_t def_id, int32_t x, int32_t y, bool boss,
         if (boss)
         {
             m->hp_max = (uint16_t)(160 + g_difficulty * 70 + g_region_id * 60);
-            m->radius = monster_draw_radius(m);
         }
         else
         {
-            m->hp_max = (uint16_t)(10 + g_difficulty * 14 + g_region_id * 8);
-            m->radius = monster_draw_radius(m);
+            // Each type brings its own bulk, and the difficulty multiplies it
+            // rather than replacing it: a brute keeps its lead over a swarm for
+            // the whole run instead of the two converging.
+            const MonsterDef *d = monster_def(def_id);
+            m->hp_max = (uint16_t)(d->hp_base + (d->hp_base * g_difficulty) / 2 +
+                                   g_region_id * 8);
         }
+        m->radius = monster_draw_radius(m);
         m->hp = m->hp_max;
         return;
     }
@@ -2372,10 +2392,10 @@ static void spawn_update(void)
     }
     g_spawn_timer = spawn_interval();
 
-    // Progressive mob variety:
-    // Difficulty 0-2: Chaser
-    // Difficulty 3-5: Chaser + Dasher
-    // Difficulty 6+: Full squad (Chaser + Dasher + Shooter)
+    // Progressive mob variety. Each region lists its three roles as
+    // {swarm, ranged, brute} (see g_regions), so the order here is also the
+    // order the player meets them: a fast melee pack first, then something that
+    // shoots back, and only once the run is deep does the heavy one show up.
     int max_choices = 1;
     if (g_difficulty >= 3) max_choices = 2;
     if (g_difficulty >= 6) max_choices = rg->mob_count;
@@ -2664,7 +2684,9 @@ void game_init(void)
         Hero *h = &g_heroes[i];
         h->level = 1;
         h->exp = 0;
-        h->exp_need = 12;
+        // Roughly four swarm kills, or two brutes, to the first card. See
+        // hero_gain_exp() for how this grows from here.
+        h->exp_need = 60;
         h->hearts_max = 5;
         h->hearts = 5;
         h->attack = 3;

@@ -286,27 +286,51 @@ void gfx_circle(int cx, int cy, int r, uint8_t color)
     }
 }
 
-// A 1px circle outline, from a 65-entry sine table. 256 angular steps is ample
-// for the radii used here and avoids pulling floating point into the renderer.
+// Quarter-sine table: g_sin_q[i] is 127 * sin(i * 90 / 64 degrees), so index 0
+// is 0 and index 64 is 127. Angles are in 1/256 of a turn.
+static const int8_t g_sin_q[65] = {
+      0,   3,   6,   9,  12,  16,  19,  22,  25,  28,  31,  34,  37,
+     40,  43,  46,  49,  51,  54,  57,  60,  63,  65,  68,  71,  73,
+     76,  78,  81,  83,  85,  88,  90,  92,  94,  96,  98, 100, 102,
+    104, 106, 107, 109, 111, 112, 113, 115, 116, 117, 118, 120, 121,
+    122, 122, 123, 124, 125, 125, 126, 126, 126, 127, 127, 127, 127,
+};
+
+// Direction of one of 256 angles, scaled to about 127 so any caller can reach a
+// radius by dividing by it.
+//
+// The two components are read from opposite ends of the same quarter table --
+// within a quadrant one rises while the other falls -- and they swap roles at
+// every quadrant boundary. Reading g_sin_q[q] into both components (which is
+// what this used to do) makes every direction a point on the diagonals, so
+// callers got a four-spoke X instead of a circle.
+void gfx_dir_256(int angle, int *dx, int *dy)
+{
+    int a = angle & 255;
+    int q = a & 63;
+    int rising = g_sin_q[q];        //   0 -> 127 across the quadrant
+    int falling = g_sin_q[64 - q];  // 127 ->   0 across the quadrant
+
+    switch (a >> 6)
+    {
+    case 0:  *dx =  falling; *dy =  rising; break;   //   0 ..  90 degrees
+    case 1:  *dx = -rising;  *dy =  falling; break;  //  90 .. 180
+    case 2:  *dx = -falling; *dy = -rising; break;   // 180 .. 270
+    default: *dx =  rising;  *dy = -falling; break;  // 270 .. 360
+    }
+}
+
+// A 1px circle outline. 256 angular steps is ample for the radii used here and
+// avoids pulling floating point into the renderer.
 void gfx_circle_outline(int cx, int cy, int r, uint8_t color)
 {
-    static const int8_t sin_t[65] = {
-          0,   3,   6,   9,  12,  16,  19,  22,  25,  28,  31,  34,  37,
-         40,  43,  46,  49,  51,  54,  57,  60,  63,  65,  68,  71,  73,
-         76,  78,  81,  83,  85,  88,  90,  92,  94,  96,  98, 100, 102,
-        104, 106, 107, 109, 111, 112, 113, 115, 116, 117, 118, 120, 121,
-        122, 122, 123, 124, 125, 125, 126, 126, 126, 127, 127, 127, 127,
-    };
     if (r <= 0)
         return;
     for (int a = 0; a < 256; a++)
     {
-        int q = a & 63;
-        int sx = sin_t[q];
-        int sy = sin_t[(q + 64) & 63];
-        if (a & 64) sx = -sx;
-        if (a & 128) sy = -sy;
-        put_px(cx + (sx * r) / 127, cy + (sy * r) / 127, color);
+        int dx, dy;
+        gfx_dir_256(a, &dx, &dy);
+        put_px(cx + (dx * r) / 127, cy + (dy * r) / 127, color);
     }
 }
 
@@ -400,6 +424,85 @@ void gfx_blit_8bpp(const uint8_t *tiles, int tw, int th, int frame,
         for (int i = sx0; i < sx1; i++)
         {
             int sxi = hflip ? (tw - 1 - i) : i;
+            uint8_t c = row[sxi];
+            if (c != 0)
+                dst[i] = c;
+        }
+    }
+}
+
+// Same contract as gfx_blit_8bpp, but resamples the frame to `pct` percent of
+// its size so one 32x32 sheet can serve creatures of different bulk. Nearest
+// neighbour on purpose: a 32x32 sprite viewed near 1:1 only turns to mush if it
+// is smoothed.
+//
+// (x, y) is still the top-left of the DRAWN sprite, so a scaled creature grows
+// down and right from that corner. Callers that want it to grow around a centre
+// pass x - (dw - tw) / 2 themselves.
+void gfx_blit_8bpp_scaled(const uint8_t *tiles, int tw, int th, int frame,
+                          int x, int y, bool hflip, bool shadow, int pct)
+{
+    if (pct <= 0)
+        return;
+
+    const uint8_t *src = tiles + (size_t)frame * tw * th;
+
+    int dw = (tw * pct) / 100;
+    int dh = (th * pct) / 100;
+    if (dw <= 0 || dh <= 0)
+        return;
+
+    int bx = x - g_cam_x;
+    int by = y - g_cam_y;
+
+    int sx0 = 0, sx1 = dw;
+    if (bx < 0)
+        sx0 = -bx;
+    if (bx + dw > AREA_W)
+        sx1 = AREA_W - bx;
+    int sy0 = 0, sy1 = dh;
+    if (by < 0)
+        sy0 = -by;
+    if (by + dh > AREA_H)
+        sy1 = AREA_H - by;
+    if (sx0 >= sx1 || sy0 >= sy1)
+        return;
+
+    if (shadow)
+    {
+        for (int j = sy0; j < sy1; j++)
+        {
+            int sj = (j * th) / dh;
+            const uint8_t *row = src + sj * tw;
+            int dy = by + j + 3;
+            if ((unsigned)dy >= AREA_H)
+                continue;
+            uint8_t *dst = g_main_bmp + dy * BMP_STRIDE;
+            for (int i = sx0; i < sx1; i++)
+            {
+                int si = (i * tw) / dw;
+                int sxi = hflip ? (tw - 1 - si) : si;
+                if (row[sxi] == 0)
+                    continue;
+                int dx = bx + i + 3;
+                if ((unsigned)dx >= AREA_W)
+                    continue;
+                uint8_t ground = ground_px(dx, dy);
+                if (ground != 0 && dst[dx] == ground)
+                    dst[dx] = PAL_SHADOW;
+            }
+        }
+    }
+
+    for (int j = sy0; j < sy1; j++)
+    {
+        int sj = (j * th) / dh;
+        const uint8_t *row = src + sj * tw;
+        uint8_t *dst = g_main_bmp + (by + j) * BMP_STRIDE + bx;
+        for (int i = sx0; i < sx1; i++)
+        {
+            int si = (i * tw) / dw;
+            int sxi = hflip ? (tw - 1 - si) : si;
             uint8_t c = row[sxi];
             if (c != 0)
                 dst[i] = c;

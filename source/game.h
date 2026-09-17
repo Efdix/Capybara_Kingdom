@@ -219,12 +219,21 @@ typedef enum {
     AI_ALLY,         // recruited: fights for the capybaras
 } AiType;
 
+// One enemy archetype. Everything here is live: the spawner reads hp_base, the
+// movement code reads speed, the draw code reads scale, and the damage and exp
+// paths read their own fields.
+//
+// A region always fields three of these, one per role -- a small fast one, a
+// big slow one and a ranged one -- so no region can be beaten by standing still
+// and no two regions play the same way. See g_monster_defs.
 typedef struct {
     AiType   ai;
-    uint8_t  radius;        // drawn circle radius, and the basis for its reach
-    uint8_t  dark, fill, light;   // the circle's three-tone ramp
-    uint16_t atk;
-    uint8_t  exp_reward;
+    uint8_t  radius;        // collision and reach radius, in pixels
+    uint8_t  scale;         // drawn size, as a percentage of the 32x32 art
+    uint8_t  speed;         // pixels per frame, before slow effects
+    uint8_t  damage;        // per hit, contact or projectile
+    uint16_t hp_base;       // hit points at difficulty 0 in the first region
+    uint16_t exp_reward;    // experience granted for a kill
 } MonsterDef;
 
 extern const MonsterDef g_monster_defs[];
@@ -327,6 +336,9 @@ typedef struct {
     uint8_t  area_id;
     uint8_t  mid_boss_id;     // phase 1 mid-boss
     uint8_t  boss_id;         // phase 2 final boss
+    // The region's spawning roster, ordered {swarm, ranged, brute}. The spawner
+    // walks it front to back as the difficulty climbs, so this order is the
+    // order the player meets them in -- keep the fast melee one first.
     uint8_t  mob_ids[3];      // monster def ids that spawn; 0xFF = unused
     uint8_t  mob_count;
     uint16_t target;          // ingredient drops needed to summon the boss
@@ -401,9 +413,16 @@ void gfx_fill_rect(int x, int y, int w, int h, uint8_t color);
 void gfx_rect_outline(int x, int y, int w, int h, uint8_t color);
 void gfx_blit_8bpp(const uint8_t *tiles, int tw, int th, int frame,
                    int x, int y, bool hflip, bool shadow);
+// Same, resampled to `pct` percent so one sheet can draw creatures of different
+// bulk. Grows down and right from (x, y) like the unscaled version.
+void gfx_blit_8bpp_scaled(const uint8_t *tiles, int tw, int th, int frame,
+                          int x, int y, bool hflip, bool shadow, int pct);
 void gfx_hline(int x, int y, int w, uint8_t color);
 void gfx_circle(int cx, int cy, int r, uint8_t color);
 void gfx_circle_outline(int cx, int cy, int r, uint8_t color);
+// Direction of one of 256 angles, each component scaled to about 127. Shared by
+// the circle outlines and anything else that needs to place something on a ring.
+void gfx_dir_256(int angle, int *dx, int *dy);
 void gfx_line(int x0, int y0, int x1, int y1, uint8_t color);
 bool collision_at(int px, int py);
 bool collision_rect(int px, int py, int w, int h);

@@ -1,28 +1,18 @@
-// Sprite drawing: the two glyph characters, and placeholder circles for
-// everything hostile.
+// Sprite drawing: the two capybaras, the enemies, and the pickups.
 //
-// ENEMIES ARE CIRCLES
+// Enemies are drawn from real sprite sheets -- 15 mobs on a 32x32 grid and 10
+// bosses on a 64x64 one -- resampled per MonsterDef.scale so a brute genuinely
+// looks bigger than a swarm rather than merely being labelled one. What the
+// player has to read off a crowd of 48 is still the creature's *state*, and
+// that is carried by rings drawn over the art (recruited / pacified / slowed /
+// telegraphing), not by the art itself.
 //
-// The creatures are placeholders on purpose. The game has 48 monsters on screen
-// at once and the thing that has to work right now is the *gameplay* -- can you
-// tell a chaser from a shooter, a normal from a boss, a slowed one from a
-// healthy one -- not whether a slime has a nice face. So every enemy is a plain
-// filled circle, and the information that actually matters is carried by
-// properties that do not need art:
+// The earlier circle placeholders are gone; tools/gen_monsters.py regenerates
+// these sheets and writes its older output into art_retired/, which is not part
+// of the compiled asset set.
 //
-//   SIZE    boss = big circle, everything else = small circle. This is the one
-//           distinction a player must never miss, so it is the most obvious one.
-//   COLOUR  one ramp per monster type, so a shooty cactus is never confused with
-//           a dashing wasp even in a crowd.
-//   RINGS   recruited / pacified / slowed / hurt get an outline in a fixed
-//           colour, reusing the conventions the rest of the HUD already uses.
-//
-// The previous creature art is not deleted: tools/gen_monsters.py still exists
-// and now writes into art_retired/, out of the compiled asset set. If the art
-// comes back, the circles are one function to revert.
-//
-// The characters, by contrast, are real sprites -- a 32x32 sheet per character,
-// four directions. See tools/gen_heroes.py.
+// The characters are a 32x32 sheet each, 8 directions x 16 frames. See
+// tools/gen_heroes.py.
 
 #include <string.h>
 
@@ -44,35 +34,40 @@ static const uint8_t *const g_hero_sheets[2] = {
 // Monster definitions
 // ---------------------------------------------------------------------------
 
-// One entry per enemy archetype. The circle's size and colour are part of the
-// definition rather than of a sprite sheet, which is what lets a new enemy be
-// added by adding a row here.
+// One entry per enemy archetype. Every region fields the same three roles, so
+// the player learns them once and then has to apply them differently as the
+// regions get harder:
 //
-// `radius` is in pixels and is the drawn circle's radius; it is also what the
-// collision and attack ranges are derived from, so a big enemy genuinely is a
-// big target.
+//   SWARM   small, fast, fragile. Harmless alone, lethal in the pack the later
+//           difficulties throw at you. Only melee.
+//   BRUTE   big, slow, armoured. Walks at you, then charges. Hits for two
+//           hearts, so it is the one you actually have to walk around.
+//   RANGED  keeps its distance and shoots. Soft, but it punishes standing still.
+//
+// `radius` drives collision and reach; `scale` drives how big it looks, so the
+// size the player sees is the size the collision believes in.
 const MonsterDef g_monster_defs[] = {
-    //             ai        radius  dark          fill          light        atk exp
-    // 雨林
-    { AI_SHOOTER,       12, PAL_GRN_DARK,  PAL_GRN_MID,   PAL_GRN_LIGHT,   4,  6 },  // 0: rain_frog (树蛙)
-    { AI_DASHER,        11, PAL_YELLOW_DARK, PAL_YELLOW_MID, PAL_WHITE_SPARK, 5, 7 },  // 1: rain_wasp (飞蜂)
-    { AI_CHASER,        12, PAL_LEAF_DARK, PAL_LEAF_MID,  PAL_LEAF_LIGHT,  4,  6 },  // 2: rain_slime (软泥)
-    // 农场
-    { AI_CHASER,        11, PAL_BRN_DARK,  PAL_BRN_MID,   PAL_TAN_BELLY,   4,  6 },  // 3: farm_rat (田鼠)
-    { AI_DASHER,        12, PAL_FUR_BLACK, PAL_STEEL_DARK, PAL_STEEL_MID,  5,  7 },  // 4: farm_crow (乌鸦)
-    { AI_SHOOTER,       12, PAL_CLAY_DARK, PAL_CLAY_MID,  PAL_SAND_LIGHT,  5,  7 },  // 5: farm_mudlet (泥怪)
-    // 牧场
-    { AI_CHASER,        12, PAL_GREY_DARK, PAL_GREY_MID,  PAL_GREY_LIGHT,  5,  7 },  // 6: past_dog (野犬)
-    { AI_DASHER,        12, PAL_CREAM_MID, PAL_WHITE,     PAL_FUR_BLACK,   6,  8 },  // 7: past_ram (黑羊)
-    { AI_SHOOTER,       11, PAL_STEEL_DARK, PAL_STEEL_MID, PAL_CYAN_LIGHT, 5,  7 },  // 8: past_hornet (牛虻)
-    // 沼泽
-    { AI_CHASER,        13, PAL_CLAY_DARK, PAL_TRUNK_DARK, PAL_PURPLE_MID, 5,  8 },  // 9: marsh_slime (淤泥怪)
-    { AI_DASHER,        11, PAL_PINE_DARK, PAL_PINE_MID,  PAL_YELLOW_LIGHT, 6, 8 },  // 10: marsh_viper (毒蟒)
-    { AI_SHOOTER,       13, PAL_CACT_DARK, PAL_CACT_MID,  PAL_YELLOW_MID,  6,  8 },  // 11: marsh_toad (泥蟾)
-    // 火山
-    { AI_CHASER,        12, PAL_LAVA_DARK, PAL_LAVA_MID,  PAL_EMBER_YELLOW, 7, 9 },  // 12: volc_imp (火灵)
-    { AI_DASHER,        12, PAL_CHOCO_DARK, PAL_CHOCO_MID, PAL_RED_LIGHT,   6,  8 },  // 13: volc_bat (蝠翼)
-    { AI_SHOOTER,       13, PAL_LAVA_DARK, PAL_LAVA_MID,  PAL_EMBER_ORANGE, 7, 10 }, // 14: volc_orb (火球)
+    //       ai          radius scale speed dmg  hp  exp
+    // --- 雨林 ---
+    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 0: rain_frog   树蛙   RANGED
+    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 1: rain_wasp   飞蜂   SWARM
+    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 2: rain_slime  软泥   BRUTE
+    // --- 农场 ---
+    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 3: farm_rat    田鼠   SWARM
+    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 4: farm_crow   乌鸦   RANGED
+    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 5: farm_mudlet 泥怪   BRUTE
+    // --- 牧场 ---
+    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 6: past_dog    野犬   SWARM
+    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 7: past_ram    黑羊   BRUTE
+    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 8: past_hornet 牛虻   RANGED
+    // --- 沼泽 ---
+    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 9: marsh_slime 淤泥怪 BRUTE
+    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 10: marsh_viper 毒蟒  SWARM
+    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 11: marsh_toad 泥蟾   RANGED
+    // --- 火山 ---
+    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 12: volc_imp    火灵   BRUTE
+    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 13: volc_bat    蝠翼   SWARM
+    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 14: volc_orb    火球   RANGED
 };
 
 #define MONSTER_DEF_COUNT (int)(sizeof(g_monster_defs) / sizeof(g_monster_defs[0]))
@@ -144,23 +139,13 @@ void draw_hero(int index)
     // Orbiting Water Orbs (灵水环绕)
     if (h->water_orbs > 0)
     {
-        static const int8_t sin_tbl[65] = {
-              0,   3,   6,   9,  12,  16,  19,  22,  25,  28,  31,  34,  37,
-             40,  43,  46,  49,  51,  54,  57,  60,  63,  65,  68,  71,  73,
-             76,  78,  81,  83,  85,  88,  90,  92,  94,  96,  98, 100, 102,
-            104, 106, 107, 109, 111, 112, 113, 115, 116, 117, 118, 120, 121,
-            122, 122, 123, 124, 125, 125, 126, 126, 126, 127, 127, 127, 127,
-        };
         for (int k = 0; k < h->water_orbs; k++)
         {
             uint8_t a = (uint8_t)(h->orb_angle + k * (256 / h->water_orbs));
-            int q = a & 63;
-            int sx = sin_tbl[q];
-            int sy = sin_tbl[(q + 64) & 63];
-            if (a & 64) sx = -sx;
-            if (a & 128) sy = -sy;
-            int ox = cx + (sx * 22) / 127;
-            int oy = cy + (sy * 22) / 127;
+            int dx, dy;
+            gfx_dir_256(a, &dx, &dy);
+            int ox = cx + (dx * 22) / 127;
+            int oy = cy + (dy * 22) / 127;
 
             gfx_circle(ox, oy, 4, PAL_CYAN_MID);
             gfx_circle(ox, oy, 2, PAL_CYAN_LIGHT);
@@ -219,8 +204,11 @@ void draw_monster(int index)
         else if ((g_frame >> 3) & 1)
             f = 1;
 
+        int pct = monster_def(m->def_id)->scale;
+        int drawn = (MOB_W * pct) / 100;
         int frame = m->def_id * 4 + f;
-        gfx_blit_8bpp(mob_tiles_bin, 32, 32, frame, cx - 16, cy - 16, hflip, true);
+        gfx_blit_8bpp_scaled(mob_tiles_bin, MOB_W, MOB_H, frame,
+                             cx - drawn / 2, cy - drawn / 2, hflip, true, pct);
     }
 
 
