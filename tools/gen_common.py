@@ -122,236 +122,392 @@ PALETTE_NAMES = [
     "murk_dark", "murk_mid", "murk_light",
     # cacao volcano: warm volcanic ash and drying-yard ground
     "ash_warm_dark", "ash_warm_mid", "ash_warm_light",
+
+    # --- palette v2 additions (also appended, same reason) ----------------
+    # plank / boardwalk: a warmer, more saturated timber than `wood_*`, which
+    # is the dark bark brown used for trunks and fences.
+    "plank_shadow", "plank_dark", "plank_mid", "plank_light",
+    # roof tiles: terracotta and the deep teal-green glazed roof used on the
+    # larger civic buildings.
+    "tile_dark", "tile_mid", "tile_light",
+    "slate_dark", "slate_mid", "slate_light",
+    # stone: cut masonry, brighter and cooler than `rock_*` (which is a
+    # weathered boulder ramp) so walls read as built rather than natural.
+    "stone_shadow", "stone_dark", "stone_mid", "stone_light",
+    # window glow: the warm lamp light that makes a village look inhabited.
+    "lamp_glow", "lamp_core",
+    # water clarification: a saturated tropical lagoon, distinct from the
+    # greenish `cyan_*` used for magic effects.
+    "sea_deep", "sea_mid", "sea_light", "foam",
+    # world map: paper, ink, route dots and the five biome washes.
+    "map_paper", "map_paper_shade", "map_ink", "map_route",
+    "map_grass", "map_grass_ho", "map_forest", "map_forest_ho",
+    "map_desert", "map_desert_ho", "map_snow", "map_snow_ho",
+    "map_ash", "map_ash_ho", "map_sea", "map_sea_ho",
+    "map_marker", "map_marker_ho",
+
+    # --- ui v3: the Black 2 / White 2 plate kit (appended, same reason) ---
+    #
+    # The storybook `ui_*` block above is a dark indigo panel with bronze trim.
+    # This block replaces it for everything the player presses: the Black 2 /
+    # White 2 menu language is *light* -- white rounded plates on a blue field,
+    # hard navy outlines, and one saturated blue that means "this is the thing
+    # you are about to press".
+    #
+    # Both sets stay in the palette because the older one still colours
+    # world-space markers and the card art; nothing that uses the new kit should
+    # reach for the old names.
+    "ui2_bg", "ui2_bg_hi",                                  # the screen field
+    "ui2_dot",                                              # field texture
+    "ui2_line", "ui2_line_soft",                            # navy outlines
+    "ui2_plate_hi", "ui2_plate", "ui2_plate_lo",            # plate gradient
+    "ui2_plate_deep",                                       # recessed / pressed
+    "ui2_screen",                                           # dark readout well
+    "ui2_blue_dark", "ui2_blue", "ui2_blue_hi", "ui2_blue_glow",
+    "ui2_ink", "ui2_ink_dim", "ui2_shadow",
+    # Semantic accents for values drawn on the light plates: the palette's
+    # existing *_dark tones are tuned for sprites on terrain and go muddy
+    # against a white panel, so the UI gets its own readable set.
+    "ui2_red", "ui2_green", "ui2_amber", "ui2_violet", "ui2_cyan",
 ]
 
+# Palette v2 -- "sunlit storybook".
+#
+# The rule the whole table follows: every material gets a four-stop ramp whose
+# shadow end is *cool and chromatic* rather than merely dark, and whose
+# highlight end is near-white. Flat mid-tone-only art is what made the old
+# version read as washed out; a material only looks solid once its darkest stop
+# and its lightest stop are far enough apart to see at a glance on a DS panel.
+# Outlines are a warm plum-black rather than neutral black, so a chunky
+# silhouette never punches a cold hole through a warm scene.
 _RGB = {
     "transparent": (255, 0, 255),
 
-    "outline": (44, 28, 40),
-    "outline_soft": (78, 54, 66),
-    "shadow": (60, 44, 58),
-    "black": (26, 20, 26),
+    "outline": (58, 34, 52),
+    "outline_soft": (100, 64, 86),
+    "shadow": (74, 52, 84),
+    "black": (32, 22, 34),
     "white": (255, 255, 255),
     "cream": (255, 246, 214),
-    "grey_light": (216, 216, 224),
-    "grey_mid": (152, 152, 168),
-    "grey_dark": (94, 94, 110),
+    "grey_light": (228, 230, 242),
+    "grey_mid": (160, 164, 188),
+    "grey_dark": (92, 96, 124),
 
-    "brn_dark": (146, 100, 54),
-    "brn_mid": (192, 142, 80),
-    "brn_light": (228, 186, 122),
-    "brn_belly": (248, 218, 170),
-    "tan_dark": (208, 158, 98),
-    "tan_mid": (240, 200, 140),
-    "tan_light": (253, 228, 178),
-    "tan_belly": (255, 242, 210),
+    "brn_dark": (150, 96, 46),
+    "brn_mid": (206, 148, 74),
+    "brn_light": (242, 194, 118),
+    "brn_belly": (255, 226, 172),
+    "tan_dark": (222, 164, 92),
+    "tan_mid": (250, 208, 138),
+    "tan_light": (255, 232, 178),
+    "tan_belly": (255, 246, 214),
 
-    "pink_dark": (198, 98, 124),
-    "pink_mid": (246, 152, 178),
-    "pink_light": (255, 198, 214),
-    "blush": (255, 170, 170),
+    "pink_dark": (214, 92, 128),
+    "pink_mid": (255, 148, 184),
+    "pink_light": (255, 200, 220),
+    "blush": (255, 160, 164),
 
-    "grn_dark": (36, 94, 54),
-    "grn_mid": (64, 140, 68),
-    "grn_light": (112, 188, 90),
-    "leaf_dark": (30, 106, 62),
-    "leaf_mid": (60, 156, 84),
-    "leaf_light": (120, 204, 106),
-    "grass_dark": (60, 130, 64),
-    "grass_mid": (100, 178, 84),
-    "grass_light": (156, 216, 110),
-    "trunk_dark": (88, 58, 36),
-    "trunk_mid": (124, 86, 52),
-    "trunk_light": (164, 120, 76),
+    "grn_dark": (30, 106, 54),
+    "grn_mid": (66, 168, 74),
+    "grn_light": (126, 214, 96),
+    "leaf_dark": (26, 122, 66),
+    "leaf_mid": (62, 180, 88),
+    "leaf_light": (134, 226, 108),
+    "grass_dark": (56, 140, 62),
+    "grass_mid": (108, 196, 76),
+    "grass_light": (168, 232, 106),
+    "trunk_dark": (94, 56, 32),
+    "trunk_mid": (136, 88, 48),
+    "trunk_light": (186, 130, 72),
 
-    "sand_dark": (198, 160, 94),
-    "sand_mid": (230, 198, 126),
-    "sand_light": (250, 228, 166),
-    "cact_dark": (46, 114, 70),
-    "cact_mid": (78, 154, 90),
-    "cact_light": (130, 196, 114),
-    "rock_dark": (114, 90, 76),
-    "rock_mid": (156, 128, 106),
-    "rock_light": (198, 174, 146),
-    "clay_dark": (170, 106, 64),
-    "clay_mid": (214, 148, 94),
+    "sand_dark": (216, 158, 82),
+    "sand_mid": (244, 206, 128),
+    "sand_light": (255, 236, 172),
+    "cact_dark": (40, 122, 74),
+    "cact_mid": (72, 170, 92),
+    "cact_light": (126, 210, 116),
+    "rock_dark": (116, 88, 82),
+    "rock_mid": (168, 134, 118),
+    "rock_light": (214, 186, 158),
+    "clay_dark": (188, 106, 56),
+    "clay_mid": (232, 152, 88),
 
-    "snow_dark": (170, 196, 226),
-    "snow_mid": (216, 234, 248),
+    "snow_dark": (146, 186, 232),
+    "snow_mid": (208, 232, 252),
     "snow_light": (252, 254, 255),
-    "ice_dark": (88, 148, 202),
-    "ice_mid": (132, 194, 234),
-    "ice_light": (194, 234, 254),
-    "pine_dark": (30, 84, 72),
-    "pine_mid": (50, 118, 98),
-    "pine_light": (88, 160, 130),
+    "ice_dark": (62, 128, 200),
+    "ice_mid": (116, 188, 240),
+    "ice_light": (192, 234, 255),
+    "pine_dark": (22, 88, 78),
+    "pine_mid": (42, 130, 106),
+    "pine_light": (86, 176, 142),
 
-    "ash_dark": (76, 64, 68),
-    "ash_mid": (114, 98, 98),
-    "ash_light": (160, 142, 134),
-    "lava_dark": (178, 46, 26),
-    "lava_mid": (234, 90, 34),
-    "lava_light": (252, 154, 50),
-    "ember_orange": (252, 178, 66),
-    "ember_yellow": (255, 232, 132),
+    "ash_dark": (74, 62, 74),
+    "ash_mid": (118, 100, 108),
+    "ash_light": (170, 148, 146),
+    "lava_dark": (186, 44, 22),
+    "lava_mid": (244, 96, 28),
+    "lava_light": (255, 162, 44),
+    "ember_orange": (255, 186, 62),
+    "ember_yellow": (255, 238, 138),
 
-    "castle_dark": (80, 64, 98),
-    "castle_mid": (120, 98, 142),
-    "castle_light": (168, 144, 186),
-    "choco_dark": (88, 52, 34),
-    "choco_mid": (124, 78, 50),
-    "choco_light": (166, 112, 74),
-    "sponge_dark": (206, 160, 98),
-    "sponge_mid": (240, 200, 140),
-    "sponge_light": (255, 230, 180),
-    "cream_dark": (218, 202, 234),
-    "cream_mid": (248, 240, 254),
+    "castle_dark": (78, 62, 104),
+    "castle_mid": (124, 100, 152),
+    "castle_light": (180, 154, 200),
+    "choco_dark": (96, 52, 30),
+    "choco_mid": (136, 80, 46),
+    "choco_light": (184, 120, 74),
+    "sponge_dark": (214, 164, 94),
+    "sponge_mid": (246, 204, 136),
+    "sponge_light": (255, 234, 180),
+    "cream_dark": (224, 206, 244),
+    "cream_mid": (250, 242, 255),
     "cream_light": (255, 255, 255),
-    "cherry_dark": (178, 36, 56),
-    "cherry_mid": (226, 64, 84),
-    "cherry_light": (254, 124, 134),
+    "cherry_dark": (188, 30, 56),
+    "cherry_mid": (238, 66, 86),
+    "cherry_light": (255, 128, 136),
 
-    "red_dark": (174, 46, 50),
-    "red_mid": (228, 76, 72),
-    "red_light": (254, 134, 120),
-    "orange_dark": (208, 106, 34),
-    "orange_mid": (248, 154, 58),
-    "yellow_dark": (208, 170, 42),
-    "yellow_mid": (252, 216, 74),
-    "yellow_light": (255, 244, 162),
-    "blue_dark": (56, 86, 178),
-    "blue_mid": (88, 134, 228),
-    "blue_light": (142, 188, 252),
-    "cyan_dark": (46, 150, 178),
-    "cyan_mid": (88, 204, 226),
-    "cyan_light": (164, 242, 252),
-    "purple_dark": (96, 56, 154),
-    "purple_mid": (148, 96, 204),
-    "purple_light": (198, 154, 242),
-    "green_spark": (148, 248, 142),
-    "white_spark": (255, 255, 242),
+    "red_dark": (182, 40, 48),
+    "red_mid": (238, 74, 70),
+    "red_light": (255, 138, 118),
+    "orange_dark": (216, 100, 26),
+    "orange_mid": (255, 156, 52),
+    "yellow_dark": (216, 172, 36),
+    "yellow_mid": (255, 220, 68),
+    "yellow_light": (255, 248, 170),
+    "blue_dark": (48, 84, 190),
+    "blue_mid": (86, 138, 238),
+    "blue_light": (146, 196, 255),
+    "cyan_dark": (36, 156, 190),
+    "cyan_mid": (86, 214, 236),
+    "cyan_light": (172, 246, 255),
+    "purple_dark": (98, 52, 164),
+    "purple_mid": (154, 96, 216),
+    "purple_light": (206, 158, 248),
+    "green_spark": (150, 252, 140),
+    "white_spark": (255, 255, 246),
 
     # --- fur ramps: warm brown, dark -> highlight ------------------------
-    "brn_shadow": (74, 44, 30),
-    "brn_deep": (110, 70, 44),
-    "brn_mid2": (162, 112, 66),
-    "brn_hi": (206, 156, 96),
-    "brn_hl": (240, 200, 148),
+    "brn_shadow": (78, 44, 30),
+    "brn_deep": (118, 70, 40),
+    "brn_mid2": (172, 114, 62),
+    "brn_hi": (216, 162, 96),
+    "brn_hl": (248, 208, 152),
 
     # --- fur ramps: light tan, dark -> highlight ------------------------
-    "tan_shadow": (128, 88, 56),
-    "tan_deep": (176, 128, 82),
-    "tan_mid2": (222, 180, 122),
-    "tan_hi": (246, 214, 162),
-    "tan_hl": (255, 240, 206),
+    "tan_shadow": (136, 88, 54),
+    "tan_deep": (186, 132, 80),
+    "tan_mid2": (236, 188, 122),
+    "tan_hi": (252, 220, 168),
+    "tan_hl": (255, 242, 210),
 
-    "fur_black": (22, 18, 26),
-    "fur_white": (250, 248, 240),
-    "fur_grey": (140, 138, 148),
+    "fur_black": (28, 20, 30),
+    "fur_white": (252, 250, 244),
+    "fur_grey": (152, 150, 166),
 
     # --- steel: 5 steps for blades and gun barrels ----------------------
-    "steel_shadow": (48, 56, 78),
-    "steel_dark": (84, 96, 124),
-    "steel_mid": (140, 154, 184),
-    "steel_hi": (196, 212, 236),
-    "steel_glint": (248, 252, 255),
+    "steel_shadow": (44, 54, 82),
+    "steel_dark": (80, 96, 130),
+    "steel_mid": (140, 158, 194),
+    "steel_hi": (202, 218, 244),
+    "steel_glint": (250, 253, 255),
 
     # --- brass: revolver frame, cartridges ------------------------------
-    "brass_shadow": (96, 66, 30),
-    "brass_dark": (150, 106, 46),
-    "brass_mid": (208, 158, 74),
-    "brass_hi": (248, 214, 138),
+    "brass_shadow": (96, 62, 22),
+    "brass_dark": (156, 106, 38),
+    "brass_mid": (218, 164, 66),
+    "brass_hi": (252, 222, 138),
 
     # --- wood: katana saya, grips, signs --------------------------------
-    "wood_dark": (60, 38, 28),
-    "wood_mid": (104, 68, 44),
-    "wood_light": (152, 106, 68),
+    "wood_dark": (62, 38, 26),
+    "wood_mid": (108, 68, 42),
+    "wood_light": (160, 110, 68),
 
     # --- gun metal (darker than steel, for the revolver body) -----------
-    "gun_dark": (34, 34, 42),
-    "gun_mid": (66, 66, 80),
-    "gun_hi": (108, 110, 128),
+    "gun_dark": (32, 32, 44),
+    "gun_mid": (66, 68, 88),
+    "gun_hi": (112, 116, 140),
 
     # --- grip: the rubber grip on both weapons --------------------------
-    "grip_dark": (58, 40, 36),
-    "grip_mid": (96, 66, 58),
-    "grip_hi": (140, 100, 86),
+    "grip_dark": (58, 38, 34),
+    "grip_mid": (100, 66, 56),
+    "grip_hi": (146, 102, 84),
 
     # --- cloth ----------------------------------------------------------
-    "cloth_red_sh": (120, 40, 44),
-    "cloth_red": (176, 62, 62),
-    "cloth_red_hi": (224, 104, 96),
-    "cloth_blue_sh": (44, 62, 122),
-    "cloth_blue": (74, 102, 178),
-    "cloth_blue_hi": (124, 158, 226),
-    "belt_dark": (52, 40, 34),
-    "belt_mid": (92, 72, 56),
+    "cloth_red_sh": (124, 32, 44),
+    "cloth_red": (188, 56, 62),
+    "cloth_red_hi": (238, 100, 96),
+    "cloth_blue_sh": (38, 58, 130),
+    "cloth_blue": (72, 104, 190),
+    "cloth_blue_hi": (128, 164, 236),
+    "belt_dark": (52, 38, 34),
+    "belt_mid": (94, 72, 56),
 
     # --- slash arc (bright crescent that fades at the ends) -------------
-    "arc_core": (255, 255, 240),
-    "arc_inner": (198, 238, 255),
-    "arc_outer": (110, 186, 240),
-    "arc_fade": (64, 118, 190),
+    "arc_core": (255, 255, 244),
+    "arc_inner": (204, 242, 255),
+    "arc_outer": (108, 190, 248),
+    "arc_fade": (58, 116, 196),
 
     # --- fire -----------------------------------------------------------
-    "fire_core": (255, 248, 190),
-    "fire_inner": (255, 186, 64),
-    "fire_outer": (232, 96, 32),
-    "fire_smoke": (108, 78, 76),
+    "fire_core": (255, 250, 196),
+    "fire_inner": (255, 190, 62),
+    "fire_outer": (238, 94, 28),
+    "fire_smoke": (116, 80, 78),
 
     # --- ice ------------------------------------------------------------
     "ice_core": (255, 255, 255),
-    "ice_inner": (178, 236, 255),
-    "ice_outer": (86, 158, 226),
-    "ice_shard": (206, 240, 255),
+    "ice_inner": (182, 240, 255),
+    "ice_outer": (80, 158, 232),
+    "ice_shard": (212, 244, 255),
 
     # --- volt -----------------------------------------------------------
-    "volt_core": (255, 255, 216),
-    "volt_inner": (252, 226, 96),
-    "volt_outer": (156, 140, 240),
+    "volt_core": (255, 255, 220),
+    "volt_inner": (255, 230, 92),
+    "volt_outer": (154, 140, 248),
 
     # --- shadow / dark magic --------------------------------------------
-    "shadow_core": (226, 200, 255),
-    "shadow_inner": (146, 92, 196),
-    "shadow_outer": (74, 42, 108),
+    "shadow_core": (230, 204, 255),
+    "shadow_inner": (150, 92, 202),
+    "shadow_outer": (72, 40, 112),
 
     # --- heal -----------------------------------------------------------
-    "heal_core": (240, 255, 236),
-    "heal_inner": (146, 240, 170),
-    "heal_outer": (72, 184, 122),
+    "heal_core": (242, 255, 238),
+    "heal_inner": (146, 246, 174),
+    "heal_outer": (66, 192, 124),
 
-    "ui_panel": (28, 24, 26),
-    "ui_panel_light": (52, 44, 46),
-    "ui_frame": (142, 110, 68),
-    "ui_frame_light": (204, 168, 114),
-    "ui_text": (255, 250, 240),
-    "ui_text_dim": (184, 172, 164),
-    "ui_gold": (240, 192, 76),
-    "ui_gold_light": (255, 232, 152),
-    "hud_heart": (240, 70, 88),
-    "hud_heart_dark": (170, 34, 56),
-    "hud_heart_empty": (98, 84, 110),
+    # UI: a deep indigo-plum panel with bronze/gold trim. Warm-dark rather
+    # than neutral-dark so panels sit *in* the world's colour range instead of
+    # on top of it, and so the gold reads as the same family as torchlight.
+    "ui_panel": (34, 26, 44),
+    "ui_panel_light": (62, 46, 76),
+    "ui_frame": (150, 106, 56),
+    "ui_frame_light": (222, 178, 106),
+    "ui_text": (255, 250, 238),
+    "ui_text_dim": (176, 166, 190),
+    "ui_gold": (250, 196, 68),
+    "ui_gold_light": (255, 236, 148),
+    "hud_heart": (248, 66, 94),
+    "hud_heart_dark": (176, 28, 58),
+    "hud_heart_empty": (86, 74, 104),
 
     # --- region terrain --------------------------------------------------
     # wheat: a warm gold ramp with real light/shadow so the field reads as
     # volume rather than a flat yellow sheet.
-    "wheat_dark": (168, 120, 44),
-    "wheat_mid": (220, 174, 76),
-    "wheat_light": (250, 226, 130),
+    "wheat_dark": (186, 124, 34),
+    "wheat_mid": (238, 182, 62),
+    "wheat_light": (255, 232, 128),
     # sugarcane: pale yellow-green, unmistakably stalk-like next to the
     # darker jungle/leaf greens.
-    "cane_dark": (106, 124, 58),
-    "cane_mid": (156, 178, 86),
-    "cane_light": (208, 222, 130),
+    "cane_dark": (98, 128, 44),
+    "cane_mid": (154, 190, 70),
+    "cane_light": (212, 230, 118),
     # marsh water: murky olive (not blue -- it is mud, not a lake).
-    "murk_dark": (46, 60, 46),
-    "murk_mid": (76, 94, 68),
-    "murk_light": (116, 132, 92),
+    "murk_dark": (44, 62, 52),
+    "murk_mid": (74, 100, 74),
+    "murk_light": (116, 142, 98),
     # volcanic ash, but *warm* (taupe) so the cacao grove reads distinct
     # from the old grey volcano and from the chocolate-brown soil.
-    "ash_warm_dark": (98, 74, 68),
-    "ash_warm_mid": (144, 116, 106),
-    "ash_warm_light": (192, 168, 154),
+    "ash_warm_dark": (104, 74, 66),
+    "ash_warm_mid": (152, 116, 100),
+    "ash_warm_light": (202, 172, 152),
+
+    # --- palette v2 additions -------------------------------------------
+    # Boardwalk timber: warmer, lighter and far more saturated than `wood_*`,
+    # which is the near-black bark brown used for trunks and fence posts. The
+    # kingdom is built on planks, so this is the most-seen material in the hub.
+    "plank_shadow": (104, 60, 30),
+    "plank_dark": (150, 92, 44),
+    "plank_mid": (198, 132, 64),
+    "plank_light": (240, 180, 100),
+
+    # Roof tiles: terracotta and a deep glazed teal. Two roof families is what
+    # lets a row of houses look like a village rather than a copy-paste.
+    "tile_dark": (150, 52, 44),
+    "tile_mid": (208, 84, 62),
+    "tile_light": (248, 128, 92),
+    "slate_dark": (30, 84, 92),
+    "slate_mid": (52, 128, 132),
+    "slate_light": (92, 178, 172),
+
+    # Cut masonry: brighter and cooler than `rock_*`, which is a weathered
+    # boulder ramp. Walls that are built should not look like scenery.
+    "stone_shadow": (108, 104, 118),
+    "stone_dark": (150, 146, 162),
+    "stone_mid": (196, 194, 208),
+    "stone_light": (238, 238, 248),
+
+    # Window light. One warm pair is enough to make a whole village look
+    # inhabited at night, and it is the only place in the game that uses it.
+    "lamp_glow": (255, 196, 74),
+    "lamp_core": (255, 244, 176),
+
+    # Tropical lagoon: saturated blue, deliberately distinct from the
+    # greenish `cyan_*` ramp the magic effects use.
+    "sea_deep": (26, 92, 168),
+    "sea_mid": (48, 148, 216),
+    "sea_light": (108, 204, 244),
+    "foam": (226, 250, 255),
+
+    # World map: a parchment chart with one wash per biome. Parchment rather
+    # than satellite view because the map is a menu, and a menu must be
+    # readable at a glance over the five destinations it offers.
+    "map_paper": (238, 216, 168),
+    "map_paper_shade": (204, 174, 126),
+    "map_ink": (78, 54, 48),
+    "map_route": (168, 108, 62),
+    "map_grass": (140, 196, 96),
+    "map_grass_ho": (186, 224, 122),
+    "map_forest": (56, 140, 78),
+    "map_forest_ho": (92, 182, 100),
+    "map_desert": (238, 200, 118),
+    "map_desert_ho": (255, 228, 158),
+    "map_snow": (206, 230, 250),
+    "map_snow_ho": (240, 250, 255),
+    "map_ash": (146, 100, 96),
+    "map_ash_ho": (196, 140, 122),
+    "map_sea": (72, 158, 216),
+    "map_sea_ho": (126, 200, 240),
+    "map_marker": (238, 68, 76),
+    "map_marker_ho": (255, 168, 150),
+
+    # --- ui v3: the DS-era Nintendo menu kit ------------------------------
+    #
+    # A light blue field, near-white plates, and a hard navy outline around
+    # everything. Two constraints shaped these values:
+    #
+    #   * The blues are desaturated. A fully saturated accent is what makes a
+    #     UI look like a web page; DS menus keep their blue closer to slate.
+    #   * Every plate tone is far enough from its neighbour to survive a
+    #     checkerboard seam, because that is how this kit gets smooth edges out
+    #     of a small palette.
+    #
+    # The ink is navy rather than black: pure black on a blue-white plate reads
+    # as a hole punched through it.
+    "ui2_bg": (150, 178, 214),
+    "ui2_bg_hi": (186, 208, 236),
+    "ui2_dot": (162, 188, 220),
+    "ui2_line": (38, 54, 92),
+    "ui2_line_soft": (122, 146, 184),
+    "ui2_plate_hi": (255, 255, 255),
+    "ui2_plate": (240, 245, 252),
+    "ui2_plate_lo": (218, 230, 246),
+    "ui2_plate_deep": (140, 166, 202),
+    "ui2_screen": (34, 52, 96),
+    "ui2_blue_dark": (28, 66, 128),
+    "ui2_blue": (56, 110, 184),
+    "ui2_blue_hi": (108, 162, 220),
+    "ui2_blue_glow": (196, 220, 246),
+    "ui2_ink": (30, 46, 84),
+    "ui2_ink_dim": (118, 138, 172),
+    "ui2_shadow": (26, 38, 70),
+
+    # UI accents, tuned to stay legible as ink on a near-white plate.
+    "ui2_red": (196, 58, 62),
+    "ui2_green": (44, 132, 84),
+    "ui2_amber": (194, 126, 26),
+    "ui2_violet": (108, 78, 168),
+    "ui2_cyan": (36, 130, 158),
 }
 
 

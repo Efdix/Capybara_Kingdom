@@ -19,7 +19,33 @@ import gen_common as gc
 from gen_common import Canvas, ix, preview_scale
 
 VARIANTS = ["idle", "bob", "attack", "hurt"]
+BOSS_VARIANTS = ["idle", "bob", "attack", "hurt",
+                 "windup", "special_a", "special_b", "stagger"]
 BOSS_SPRITE = 64
+
+
+# --- boss pose vocabulary --------------------------------------------------
+#
+# A duel is read off body language, so a boss needs more than a walk cycle. The
+# three extra poses below are the ones a fight actually leans on:
+#
+#   windup     -- coiled back and low: "this is about to hurt"
+#   special_a  -- the signature move's own posture (a dig, a rise, a glow)
+#   special_b  -- the phase-2 stance: bigger, hotter, unmistakably angrier
+#   stagger    -- on its knees: the reward window, drawn so it is unmissable
+#
+# Each boss maps the four to its own anatomy, because the poses have to read as
+# that creature doing them, not as a generic puppet being scaled.
+BOSS_POSE = {
+    "idle":      (0, 0, 0),
+    "bob":       (0, 1, 0),
+    "attack":    (0, -2, 0),
+    "hurt":      (0, 2, 0),
+    "windup":    (-2, 4, 0),
+    "special_a": (0, -3, 0),
+    "special_b": (0, -1, 0),
+    "stagger":   (3, 6, 0),
+}
 
 
 # ===========================================================================
@@ -455,10 +481,38 @@ def to_boss_canvas(art, aura=None):
 
 # --- REGION 1 BOSSES (雨林) ------------------------------------------------
 
+def boss_off(mapping, variant):
+    """Boss pose offset, with the duel poses derived from the original four.
+
+    Every boss function below was written with four poses and its own anatomy
+    driving them. Rather than duplicate that anatomy eight times, the four new
+    duel poses fall back onto the originals and add their own tilt -- so the
+    creature's proportions stay its own while the new postures still read as
+    wind-up / signature / enraged / broken.
+
+      windup     coil lower and further back than a swing
+      special_a  the signature move lifts the body
+      special_b  the phase-2 stance: taller and prouder
+      stagger    dropped and slumped forward
+    """
+    base = mapping.get(variant)
+    if base is not None:
+        return base
+    if variant == "windup":
+        return mapping["attack"] + 2
+    if variant == "special_a":
+        return mapping["bob"] - 3
+    if variant == "special_b":
+        return mapping["bob"] - 4
+    if variant == "stagger":
+        return mapping["hurt"] + 4
+    return 0
+
+
 def b_rain_ape(pal, variant="idle"):
     """Mid-Boss: 雨林巨猿 (Jungle Silverback Ape). Powerful broad-chested gorilla."""
     c = Canvas(48, 48)
-    heave = {"idle": 0, "bob": 1, "attack": -2, "hurt": 2}[variant]
+    heave = boss_off({"idle": 0, "bob": 1, "attack": -2, "hurt": 2}, variant)
     y = 6 + heave
     # massive arms & fists
     c.round_rect(4, y + 14, 10, 22, 4, ix("brn_dark"))
@@ -490,7 +544,7 @@ def b_rain_ape(pal, variant="idle"):
 def b_rain_treant(pal, variant="idle"):
     """Final Boss: 树精长老 (Treant Elder). Towering oak spirit with leafy crown."""
     c = Canvas(48, 48)
-    sway = {"idle": 0, "bob": 1, "attack": 2, "hurt": -1}[variant]
+    sway = boss_off({"idle": 0, "bob": 1, "attack": 2, "hurt": -1}, variant)
     # sprawling leafy crown
     c.circle(24 + sway, 12, 17, ix("leaf_dark"))
     c.circle(24 + sway, 12, 15, ix("leaf_mid"))
@@ -518,7 +572,7 @@ def b_rain_treant(pal, variant="idle"):
 def b_farm_boar(pal, variant="idle"):
     """Mid-Boss: 狂暴野猪 (Raging Boar). Bristled boar with giant ivory tusks."""
     c = Canvas(48, 48)
-    charge = {"idle": 0, "bob": 1, "attack": -3, "hurt": 2}[variant]
+    charge = boss_off({"idle": 0, "bob": 1, "attack": -3, "hurt": 2}, variant)
     y = 8 + charge
     # hefty bristled body
     c.blob(24, y + 18, 18, 14, ix("brn_shadow"), n=3.5)
@@ -548,7 +602,7 @@ def b_farm_boar(pal, variant="idle"):
 def b_farm_ratking(pal, variant="idle"):
     """Final Boss: 硕鼠大王 (Rat King). Colossal fat rat king with golden crown."""
     c = Canvas(48, 48)
-    squash = {"idle": 0, "bob": 1, "attack": -2, "hurt": 2}[variant]
+    squash = boss_off({"idle": 0, "bob": 1, "attack": -2, "hurt": 2}, variant)
     y = 6 + squash
     # curled thick tail
     for tx, ty in ((6, y + 32), (4, y + 26), (4, y + 20), (6, y + 16), (9, y + 14)):
@@ -589,7 +643,7 @@ def b_farm_ratking(pal, variant="idle"):
 def b_past_wolf(pal, variant="idle"):
     """Mid-Boss: 夜狼领袖 (Night Wolf Alpha). Sleek silver-grey wolf with cyan eyes."""
     c = Canvas(48, 48)
-    stalk = {"idle": 0, "bob": 1, "attack": -2, "hurt": 2}[variant]
+    stalk = boss_off({"idle": 0, "bob": 1, "attack": -2, "hurt": 2}, variant)
     y = 8 + stalk
     # bushy tail
     for tx, ty in ((36, y + 16), (40, y + 12), (42, y + 7)):
@@ -619,7 +673,7 @@ def b_past_wolf(pal, variant="idle"):
 def b_past_bull(pal, variant="idle"):
     """Final Boss: 狂暴黑牛 (Raging Bull). Massive muscular black bull with golden nose ring."""
     c = Canvas(48, 48)
-    pant = {"idle": 0, "bob": 1, "attack": -3, "hurt": 2}[variant]
+    pant = boss_off({"idle": 0, "bob": 1, "attack": -3, "hurt": 2}, variant)
     y = 6 + pant
     # SHARP WIDE CURVED HORNS
     c.round_rect(8, y + 2, 7, 5, 2, ix("white"))
@@ -651,7 +705,7 @@ def b_past_bull(pal, variant="idle"):
 def b_marsh_toadlord(pal, variant="idle"):
     """Mid-Boss: 泥沼巨蟾 (Swamp Toad Lord). Bloated purple-warted toxic toad."""
     c = Canvas(48, 48)
-    croak = {"idle": 0, "bob": 1, "attack": -2, "hurt": 2}[variant]
+    croak = boss_off({"idle": 0, "bob": 1, "attack": -2, "hurt": 2}, variant)
     y = 7 + croak
     # gargantuan squat body
     c.blob(24, y + 21, 19, 14, ix("cact_dark"), n=3.5)
@@ -679,7 +733,7 @@ def b_marsh_toadlord(pal, variant="idle"):
 def b_marsh_caiman(pal, variant="idle"):
     """Final Boss: 凯门鳄王 (Caiman King). Giant armored caiman, capybara's real-world nemesis."""
     c = Canvas(48, 48)
-    lunge = {"idle": 0, "bob": 1, "attack": -3, "hurt": 2}[variant]
+    lunge = boss_off({"idle": 0, "bob": 1, "attack": -3, "hurt": 2}, variant)
     y = 8 + lunge
     # long serrated crocodile tail
     for tx, ty in ((38, y + 14), (42, y + 18), (44, y + 24)):
@@ -713,7 +767,7 @@ def b_marsh_caiman(pal, variant="idle"):
 def b_volc_golem(pal, variant="idle"):
     """Mid-Boss: 焦糖熔岩巨兽 (Caramel Lava Golem). Basalt colossus with molten veins."""
     c = Canvas(48, 48)
-    heave = {"idle": 0, "bob": 1, "attack": -2, "hurt": 2}[variant]
+    heave = boss_off({"idle": 0, "bob": 1, "attack": -2, "hurt": 2}, variant)
     y = 6 + heave
     # massive obsidian fists
     c.circle(8, y + 28, 7, ix("ash_dark"))
@@ -741,7 +795,7 @@ def b_volc_golem(pal, variant="idle"):
 def b_volc_cakelord(pal, variant="idle"):
     """Final Boss: 蛋糕魔王 (Cake Lord). 3-tier dark chocolate crown demon king."""
     c = Canvas(48, 48)
-    bob = {"idle": 0, "bob": 2, "attack": -2, "hurt": 3}[variant]
+    bob = boss_off({"idle": 0, "bob": 2, "attack": -2, "hurt": 3}, variant)
     y = 6 + bob
     # bottom tier: dark chocolate
     c.round_rect(6, y + 26, 36, 16, 4, ix("choco_dark"))
@@ -851,11 +905,13 @@ def main():
     print(f"Generated mob tiles: {mob_path} ({len(all_mob_frames)} frames, {len(mob_bin)} bytes)")
 
     all_boss_frames = []
-    print("--- Generating 10 Dual-Phase Bosses (64x64) ---")
+    print("--- Generating 10 Dual-Phase Bosses (64x64, 8 poses) ---")
     boss_previews = []
     boss_labels = []
     for name, (fn, aura) in BOSSES.items():
-        frames = [to_boss_canvas(fn(None, v), aura) for v in VARIANTS]
+        # Eight poses per boss: the four original walk poses plus the four the
+        # duel reads off body language (wind-up / signature / enraged / broken).
+        frames = [to_boss_canvas(fn(None, v), aura) for v in BOSS_VARIANTS]
         all_boss_frames.extend(frames)
         boss_previews.append(frames[0])
         boss_labels.append(f"{name}")

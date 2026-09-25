@@ -73,9 +73,46 @@ if ($hwnd -eq [IntPtr]::Zero) { Write-Error "melonDS window not found"; exit 1 }
 # returns real pixels for a window the compositor is actually drawing; for an
 # occluded window it yields an all-black bitmap, which is indistinguishable
 # from a rendering bug in the game.
+#
+# A plain SetForegroundWindow from a background process is refused outright on
+# modern Windows -- the call returns success and the focus does not move, so
+# every key after it lands in whatever window really has focus. Attaching this
+# thread's input queue to the foreground window's thread is the documented way
+# to earn the switch, and it is what makes the keys below actually arrive.
 [void][Win32]::ShowWindow($hwnd, 9)   # SW_RESTORE
-[void][Win32]::SetForegroundWindow($hwnd)
+
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Fg {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern uint
+      GetWindowThreadProcessId(IntPtr h, out uint pid);
+  [DllImport("user32.dll")] public static extern bool
+      AttachThreadInput(uint a, uint b, bool attach);
+  public static bool Steal(IntPtr target) {
+    uint dummy = 0;
+    uint mine  = GetWindowThreadProcessId(GetForegroundWindow(), out dummy);
+    uint theirs = GetWindowThreadProcessId(target, out dummy);
+    if (mine == 0 || theirs == 0) return false;
+    AttachThreadInput(mine, theirs, true);
+    bool ok = SetForegroundWindow(target);
+    AttachThreadInput(mine, theirs, false);
+    return ok;
+  }
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+}
+"@
+
+$null = [Fg]::Steal($hwnd)
 Start-Sleep -Milliseconds 250
+
+# Confirm the switch actually happened; a silent failure here is the one thing
+# that makes every later step look like a game bug.
+$fgNow = [Fg]::GetForegroundWindow()
+if ($fgNow -ne $hwnd) {
+    Write-Warning "could not focus melonDS (fg=$fgNow want=$hwnd); keys may be lost"
+}
 
 function Send-Scancode([int]$code, [int]$holdMs) {
     # Send the scancode directly, exactly as SDL reports it.

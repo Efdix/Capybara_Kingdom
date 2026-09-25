@@ -25,8 +25,17 @@
 #include "mob_tiles_bin.h"
 #include "boss_tiles_bin.h"
 
-// --- skill cards: 12 x (72x96) 8bpp, one picture per card -----------------
+// --- skill cards: 20 x (72x96) 8bpp, one picture per card -----------------
+// Twelve base cards then the eight fusion results, in CARD_FUSE_* order. The
+// count is CARD_COUNT in game.h, and verify_assets.py now checks this sheet
+// against that number rather than a literal, so the two cannot drift apart.
 #include "card_atlas_bin.h"
+
+// --- the kingdom's field: 24 x (16x16) 8bpp --------------------------------
+// Soil (dry/wet) plus five crops at three growth stages, drawn per plot at
+// runtime because a plot's picture changes every day. Layout constants live in
+// source/farm_art.h, which the generator owns.
+#include "farm_tiles_bin.h"
 
 
 // --- regions: a 48-tile 16x16 atlas + a tile map, per region ---------------
@@ -61,6 +70,14 @@
 const uint8_t *area_atlas(int area_id);
 const uint8_t *area_map(int area_id);
 const uint8_t *area_prop(int area_id);
+// Tile dimensions of an area's map buffer (the buffers carry no length).
+void area_size(int area_id, int *cols, int *rows);
+
+// --- full-screen UI art: 256x192 8bpp ---------------------------------------
+// The title scene and the expedition chart. These are UI compositions rather
+// than parts of the world, so they are blitted in screen space.
+#include "ui_title_bin.h"
+#include "ui_worldmap_bin.h"
 
 // --- CJK font atlas: 16x16 4bpp glyphs, order given by font_chars.h ---------
 #include "font_glyphs_bin.h"
@@ -75,14 +92,27 @@ const uint8_t *area_prop(int area_id);
 #define HERO_FRAMES   16     // per direction: idle 4 / walk 6 / attack 4 / hurt 2
 
 // Enemies. One 32x32 sheet holds 15 mobs with 4 frames each; bosses are 64x64
-// with 4 frames each. A mob is drawn at its MonsterDef scale, so its on-screen
-// size is not fixed by these -- they are the source art's size.
+// with 8 frames each -- the four walk poses plus the four poses a duel reads
+// off body language (wind-up / signature / enraged / broken). A mob is drawn at
+// its MonsterDef scale, so its on-screen size is not fixed by these -- they are
+// the source art's size.
 #define MOB_W         32
 #define MOB_H         32
 #define MOB_FRAMES    4
 #define BOSS_W        64
 #define BOSS_H        64
-#define BOSS_FRAMES   4
+#define BOSS_FRAMES   8
+
+// Boss frame indices within a boss block. The order is fixed by
+// tools/gen_monsters.py (BOSS_VARIANTS) and must match these.
+#define BF_IDLE       0
+#define BF_BOB        1
+#define BF_ATTACK     2
+#define BF_HURT       3
+#define BF_WINDUP     4   // coiled back and low: about to attack
+#define BF_SPECIAL_A  5   // the signature move's own posture (dig / rise)
+#define BF_SPECIAL_B  6   // the enraged stance, worn through phases 2 and 3
+#define BF_STAGGER    7   // on its knees: the punish window
 
 
 // Character frame indices within a direction block. The sheet order is fixed by

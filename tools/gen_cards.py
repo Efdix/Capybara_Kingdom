@@ -1,5 +1,5 @@
 """
-Skill card art: the twelve cards of the level-up picker, 72x96 each.
+Skill card art: the twenty cards of the level-up picker, 72x96 each.
 
 Modern indie aesthetic with distinct Capybara identity:
   0 尖牙: Massive rodent chisel incisors chomping a green reed with crunch sparks!
@@ -15,9 +15,24 @@ Modern indie aesthetic with distinct Capybara identity:
  10 磁吸: Ruby-cobalt horseshoe magnet drawing in golden coins and yuzu orange!
  11 利爪: Capybara furry paw raking with 3 huge glowing razor claw slashes!
 
+The fused eight (ids 12..19, game.h CARD_FUSE_*). They are bought with two
+cards rather than one, so they wear the *same* frame geometry in a gold plate:
+brass rim, gold name band, a twin-ring badge in the band, and inside the art
+window the shared vignette in gold (`fuse_halo`) instead of the base cards'
+tan one. A player who has never read a description can see that a fused card is
+a promotion of the twelve rather than a thirteenth kind of thing:
+ 12 掠食突袭: Diving capybara biting clean through the enemy in its path!
+ 13 荆棘铁壁: Thorned steel ring, tail braced, incoming hit flashing off it!
+ 14 潮汐双炮: Three piercing water bolts volleyed past orbiting crystal orbs!
+ 15 恶臭香氛: Purple reek cloud over a poison pool, enemy's will draining away!
+ 16 百兽盟主: Crowned capybara flanked by two buffed little retainers!
+ 17 疾风吸取: Wind vortex dragging coins into a gold sprinting paw print!
+ 18 沸泉地雷: Buried mine erupting into a scalding geyser burst!
+ 19 回旋冲角: Whirling horned capybara sweeping the ring clear!
+
 Outputs (both into graphics/ unless an output dir is given on the command line):
-  card_atlas.bin     12 cards x 72x96, 8bpp row-major, no tiling, one byte per
-                     pixel, in card-index order 0..11 -> 82944 bytes exactly
+  card_atlas.bin     20 cards x 72x96, 8bpp row-major, no tiling, one byte per
+                     pixel, in card-index order 0..19 -> 138240 bytes exactly
   preview_cards.png  contact sheet at 3x, labelled with the card names
 """
 
@@ -33,7 +48,8 @@ from gen_common import Canvas, ix
 
 
 CARD_W, CARD_H = 72, 96
-CARD_COUNT = 12                 # game.h CARD_COUNT; the atlas is indexed by id
+CARD_COUNT = 20                 # game.h CARD_COUNT; the atlas is indexed by id
+CARD_BASE_COUNT = 12            # game.h CARD_BASE_COUNT; ids 12+ are the fusions
 CORNER_R = 4                    # rounded corners: these pixels stay index 0
 
 FACE_X = 4                      # 2px dark edge + 2px lighter bevel, then face
@@ -102,6 +118,75 @@ def stamp_arc(c, cx, cy, rx, ry, a0, a1, stamp_r, col, taper=None):
             continue
         a = math.radians(a0 + (a1 - a0) * u)
         c.circle(cx + rx * math.cos(a), cy + ry * math.sin(a), r, col)
+
+
+def spike(c, x, y, deg, r_base, r_tip, half, col):
+    """One outward triangle: a thorn on a ring, a shard of an explosion.
+
+    Angles are screen angles (0 = right, 90 = down) so a caller can walk a
+    circle with range(0, 360, 45) the way `stamp_arc` does.
+    """
+    rad = math.radians(deg)
+    nx, ny = math.cos(rad), math.sin(rad)
+    tx, ty = -ny, nx
+    fill_poly(c, [(x + nx * r_base + tx * half, y + ny * r_base + ty * half),
+                  (x + nx * r_base - tx * half, y + ny * r_base - ty * half),
+                  (x + nx * r_tip, y + ny * r_tip)], ix(col))
+
+
+def water_lance(c, x0, x1, y, half=4.2, tip=0.6):
+    """A horizontal water bolt: fat tail, point at the tip -- the piercing shot.
+
+    Same four-band ramp as `em_water`'s column (cyan_dark edge, cyan_mid body,
+    cyan_light core, white_spark filament) so water reads the same on every card
+    it appears on; only the axis changes. The white filament is deliberately
+    thin: a wide one turns the bolt into a milky bar instead of water.
+    """
+    span = max(1.0, float(x1 - x0))
+    for i in range(int(x0), int(x1) + 1):
+        u = (i - x0) / span
+        h = tip + (half - tip) * (1.0 - u) ** 1.3
+        c.vline(i, int(round(y - h)) - 1, int(round(y + h)) + 1, ix("cyan_dark"))
+        c.vline(i, int(round(y - h)), int(round(y + h)), ix("cyan_mid"))
+        c.vline(i, int(round(y - h * 0.72)), int(round(y + h * 0.55)),
+                ix("cyan_light"))
+        if h > 3.2:
+            c.vline(i, int(round(y - h * 0.22)), int(round(y + h * 0.12)),
+                    ix("white_spark"))
+
+
+def fuse_halo(c, cx, cy):
+    """The fused set's shared backdrop: the base cards' vignette, in gold.
+
+    The twelve base emblems that use a vignette open with a quiet tan/cream one
+    -- it is a paper tint under the picture, not a frame around it, and it has
+    to stay that way or the emblem's own silhouette stops reading. So the fused
+    eight keep the identical structure and size (same five pixels of tint, same
+    cream arena to draw on) and only swap the tint: tan becomes wheat. The rest
+    of the gold lives on the plate, where the reward is announced.
+    """
+    c.ellipse(cx, cy, 22.0, 18.0, ix("wheat_mid"))
+    c.ellipse(cx, cy, 20.5, 16.5, ix("wheat_light"))
+    c.ellipse(cx, cy, 17.0, 13.0, ix("cream_light"))
+
+
+def draw_fuse_badge(c):
+    """The mark of a fused card, centred in the gold name band.
+
+    Twin rings (two parents, one card) with a pip on each side for the pair that
+    went into it. Read at 48x64 as on the DS, it is the one element that
+    separates a fused card from a base one before any text is read.
+    """
+    hx, hy = CARD_W // 2, HEADER_Y0 + 7
+    for px in (hx - 16, hx + 16):
+        c.circle(px, hy, 2.6, ix("outline"))
+        c.circle(px, hy, 1.5, ix("ui_gold_light"))
+    c.circle(hx, hy, 6.0, ix("outline"))
+    c.circle(hx, hy, 5.0, ix("brass_hi"))
+    c.circle(hx, hy, 3.6, ix("brass_shadow"))
+    c.circle(hx, hy, 2.4, ix("ui_gold_light"))
+    c.circle(hx, hy, 1.1, ix("brass_shadow"))
+    c.set(hx - 2, hy - 3, ix("white_spark"))
 
 
 # ---------------------------------------------------------------------------
@@ -573,6 +658,495 @@ def em_claws(c, cx, cy, acc):
 
 
 # ---------------------------------------------------------------------------
+# 8 Fusion emblems (ids 12..19)
+#
+# Each one shows what the fusion *does*, in the same visual language as its two
+# parents so the recipe is legible from the picture: a bite that reaches, a
+# guard that answers, a volley, a cloud, a retinue, a vortex, a trap, a spin.
+# ---------------------------------------------------------------------------
+
+def em_predator_rush(c, cx, cy, acc):
+    """12 掠食突袭 -- 尖牙 + 冲撞: one dive, and the bite lands on everything."""
+    fuse_halo(c, cx, cy)
+
+    # What the dive already went through: three of them, flat out, and the
+    # trail it left. This is the "hits everything on the way" clause, and it is
+    # why this card needs no speed lines -- the wreckage says how fast it was.
+    for ex, ey in ((cx - 19.0, cy - 14.0), (cx - 23.0, cy - 2.0),
+                   (cx - 18.0, cy + 10.0)):
+        c.hline(int(ex + 4), int(ex + 9), int(ey), ix("cream"))
+        c.circle(ex, ey, 4.0, ix("outline"))
+        c.circle(ex, ey, 3.2, ix("grey_mid"))
+        c.circle(ex - 0.6, ey - 0.6, 2.0, ix("grey_light"))
+        c.set(int(ex - 1), int(ey - 1), ix("outline"))
+        c.set(int(ex - 1), int(ey + 1), ix("outline"))
+    for k in range(6):
+        c.set(int(cx - 11 + k * 3), int(cy - 7 + math.sin(k * 1.3) * 4.0),
+              ix("white_spark"))
+    # Air parted under the pounce.
+    for dy, x0, x1 in ((14, -16, 4), (19, -12, 2)):
+        y = int(cy + dy)
+        c.hline(int(cx + x0), int(cx + x1), y + 1, ix("tan_shadow"))
+        c.hline(int(cx + x0), int(cx + x1), y, ix("cream"))
+        c.hline(int(cx + x0 + 3), int(cx + x1 - 3), y, ix("white_spark"))
+
+    # The capybara, nose down in profile: skull up, snout out low, jaws open.
+    sx, sy = cx + 1.0, cy - 1.0
+    c.blob(sx, sy, 11.5, 10.0, ix("outline"), n=4.0)
+    c.blob(sx, sy, 10.5, 9.0, ix("brn_deep"), n=4.0)
+    c.blob(sx - 0.5, sy - 1.5, 9.0, 7.0, ix("brn_mid2"), n=4.0)
+    c.blob(sx - 2.0, sy - 3.5, 6.5, 4.0, ix("brn_hi"), n=4.0)
+    c.ellipse(sx - 9.0, sy - 5.0, 3.0, 2.0, ix("outline"))
+    c.ellipse(sx - 9.0, sy - 5.0, 1.8, 1.1, ix("pink_mid"))
+    c.hline(int(sx + 1), int(sx + 5), int(sy - 2), ix("outline"))
+    c.set(int(sx + 3), int(sy - 3), ix("white_spark"))
+    # A rounded snout, not a second box: two boxes in a row read as a crate.
+    c.blob(sx + 13.0, sy + 6.0, 8.0, 5.5, ix("outline"), n=4.0)
+    c.blob(sx + 13.0, sy + 6.0, 7.0, 4.5, ix("brn_belly"), n=4.0)
+    c.blob(sx + 12.0, sy + 4.5, 5.0, 3.0, ix("tan_belly"), n=4.0)
+    c.set(int(sx + 20), int(sy + 5), ix("outline"))
+    c.set(int(sx + 20), int(sy + 6), ix("outline"))
+    c.set(int(sx + 19), int(sy + 8), ix("brn_shadow"))
+    # The gape: dark, so the two cream incisors in it read as teeth.
+    c.rect(int(sx + 8), int(sy + 10), 15, 5, ix("outline"))
+    c.rect(int(sx + 9), int(sy + 11), 13, 3, ix("brn_shadow"))
+    for tx in (sx + 11.0, sx + 16.0):
+        fill_poly(c, [(tx - 2.2, sy + 9.0), (tx + 2.2, sy + 9.0), (tx, sy + 14.0)],
+                  ix("cream"))
+    c.round_rect(int(sx + 6), int(sy + 15), 14, 5, 2, ix("outline"))
+    c.round_rect(int(sx + 7), int(sy + 16), 13, 3, 1, ix("brn_belly"))
+    c.round_rect(int(sx - 13), int(sy + 7), 5, 4, 1, ix("brn_deep"))
+
+    # The bite itself.
+    fx, fy = cx + 19.0, cy + 17.0
+    spark(c, fx, fy, 4.6, ix("orange_dark"))
+    spark(c, fx, fy, 3.2, ix("ember_yellow"))
+    spark(c, fx, fy, 1.6, ix("white_spark"))
+    for dx, dy in ((4, -3), (5, 2), (1, 5)):
+        c.set(int(fx + dx), int(fy + dy), ix("red_mid"))
+        c.set(int(fx + dx), int(fy + dy + 1), ix("orange_mid"))
+
+
+def em_thorn_bastion(c, cx, cy, acc):
+    """13 荆棘铁壁 -- 铁尾 + 厚皮: a thorned ring, and the answer to a parry."""
+    fuse_halo(c, cx, cy)
+
+    # The wall: a riveted steel ring wearing eight thorns.
+    for deg in range(0, 360, 45):
+        rad = math.radians(deg)
+        spike(c, cx, cy, deg, 13.0, 22.0, 5.0, "outline")
+        spike(c, cx, cy, deg, 13.6, 20.6, 4.0, "leaf_dark")
+        spike(c, cx, cy, deg, 13.8, 19.2, 2.5, "grn_mid")
+        c.set(int(round(cx + math.cos(rad) * 17.0 - math.sin(rad) * 1.2)),
+              int(round(cy + math.sin(rad) * 17.0 + math.cos(rad) * 1.2)),
+              ix("leaf_light"))
+
+    c.circle(cx, cy, 17.5, ix("outline"))
+    c.circle(cx, cy, 16.5, ix("steel_shadow"))
+    c.circle(cx, cy, 15.0, ix("steel_dark"))
+    c.circle(cx, cy, 13.0, ix("steel_mid"))
+    c.circle(cx, cy, 12.0, ix("steel_hi"))
+    c.circle(cx, cy, 10.5, ix("cream"))
+    for deg in range(22, 360, 45):
+        rad = math.radians(deg)
+        c.circle(cx + 14.2 * math.cos(rad), cy + 14.2 * math.sin(rad), 1.5,
+                 ix("steel_glint"))
+
+    # The 铁尾 parent, planted across the ring as the brace.
+    c.round_rect(int(cx - 11), int(cy - 3), 13, 5, 2, ix("outline"))
+    c.round_rect(int(cx - 10), int(cy - 2), 12, 3, 1, ix("steel_dark"))
+    c.hline(int(cx - 9), int(cx + 1), int(cy - 2), ix("steel_hi"))
+    for jx in (cx - 7.0, cx - 3.0):
+        c.vline(int(jx), int(cy - 3), int(cy + 1), ix("brass_mid"))
+        c.set(int(jx), int(cy - 2), ix("brass_hi"))
+    c.circle(cx + 3.0, cy, 5.5, ix("outline"))
+    c.circle(cx + 3.0, cy, 4.6, ix("steel_dark"))
+    c.circle(cx + 2.2, cy - 0.8, 3.4, ix("steel_mid"))
+    c.circle(cx + 1.4, cy - 1.6, 1.7, ix("steel_hi"))
+    for sx, sy in ((-3, 0), (3, 0), (0, -3), (0, 3)):
+        c.set(int(cx + 3 + sx), int(cy + sy), ix("steel_glint"))
+
+    # What the parry does about it: the hit flashes off, the hitter is stunned.
+    fx, fy = cx + 12.0, cy - 12.0
+    spark(c, fx, fy, 5.0, ix("white_spark"))
+    spark(c, fx + 2.0, fy - 2.0, 3.0, ix("ember_yellow"))
+    for dx, dy in ((6, -5), (8, -1), (2, -7)):
+        c.set(int(fx + dx), int(fy + dy), ix("red_mid"))
+        c.set(int(fx + dx), int(fy + dy + 1), ix("orange_mid"))
+    sx, sy = cx - 12.0, cy + 13.0
+    spark(c, sx, sy, 5.0, ix("volt_inner"))
+    spark(c, sx, sy, 3.0, ix("volt_core"))
+    for dx, dy in ((-7, -3), (6, -4), (0, 6)):
+        c.set(int(sx + dx), int(sy + dy), ix("volt_outer"))
+
+
+def em_tidal_twin(c, cx, cy, acc):
+    """14 潮汐双炮 -- 水柱 + 灵水: a three-bolt volley, orbs circling the muzzle."""
+    fuse_halo(c, cx, cy)
+
+    # The 灵水 parent: an orbit of beads around the muzzle, two of them solid.
+    ox, oy = cx - 12.0, cy
+    for deg in range(0, 360, 12):
+        rad = math.radians(deg)
+        bx = int(round(ox + 12.5 * math.cos(rad)))
+        by = int(round(oy + 11.0 * math.sin(rad)))
+        c.set(bx, by, ix("cyan_light"))
+    for deg in (135, 225):
+        rad = math.radians(deg)
+        bx, by = ox + 12.5 * math.cos(rad), oy + 11.0 * math.sin(rad)
+        c.circle(bx, by, 4.2, ix("outline"))
+        c.circle(bx, by, 3.4, ix("cyan_dark"))
+        c.circle(bx, by, 2.6, ix("cyan_mid"))
+        c.circle(bx - 0.7, by - 0.7, 1.4, ix("cyan_light"))
+        c.set(int(bx - 1), int(by - 1), ix("white_spark"))
+
+    c.circle(ox, oy, 7.0, ix("outline"))
+    c.circle(ox, oy, 6.0, ix("cyan_dark"))
+    c.circle(ox, oy, 4.8, ix("cyan_mid"))
+    c.circle(ox - 1.0, oy - 1.0, 3.0, ix("cyan_light"))
+    c.set(int(ox - 1), int(oy - 1), ix("white_spark"))
+
+    # The 水柱 parent: three bolts, the middle one thrown furthest.
+    for k, dy in enumerate((-12.0, 0.0, 12.0)):
+        x_tip = cx + 24.0 - abs(k - 1) * 3.0
+        water_lance(c, cx - 5.0, x_tip, cy + dy, half=4.2)
+        spark(c, x_tip - 4.0, cy + dy, 2.6, ix("cyan_light"))
+    for dx, dy, r in ((-3, -15, 2.2), (-1, 15, 2.0), (-6, 13, 1.6)):
+        c.circle(cx + dx, cy + dy, r, ix("cyan_dark"))
+        c.circle(cx + dx, cy + dy, r - 0.7, ix("cyan_light"))
+        c.set(int(cx + dx - 1), int(cy + dy - 1), ix("white_spark"))
+    c.set(int(cx + 8), int(cy - 16), ix("cyan_mid"))
+    c.set(int(cx + 10), int(cy + 17), ix("cyan_mid"))
+
+
+def em_miasma(c, cx, cy, acc):
+    """15 恶臭香氛 -- 粪球 + 安抚: a reek cloud over the pool, and lost will."""
+    fuse_halo(c, cx, cy)
+
+    # The cloud, in three passes: silhouette, body, then one dark arc along the
+    # top of every lobe. Outlining each puff as it is drawn turns the cloud into
+    # a bunch of grapes, and outlining none of them turns it into a mushroom --
+    # a lobe needs a shadow line, not a ring.
+    puffs = ((-15.5, -2.0, 6.5), (-8.0, -5.5, 7.5), (1.0, -6.5, 8.0),
+             (9.0, -3.5, 7.0), (15.0, 0.5, 5.5), (-8.0, 1.5, 6.5),
+             (2.0, 0.0, 7.0), (10.0, 2.5, 6.0))
+    for px, py, r in puffs:
+        c.circle(cx + px, cy + py + 1.0, r + 1.0, ix("outline"))
+    for px, py, r in puffs:
+        c.circle(cx + px, cy + py + 1.0, r, ix("shadow_outer"))
+    for px, py, r in puffs:
+        c.circle(cx + px - 0.8, cy + py, r - 1.6, ix("shadow_inner"))
+    for px, py, r in puffs:
+        stamp_arc(c, cx + px, cy + py + 1.0, r + 0.4, r + 0.4, 188.0, 352.0,
+                  1.1, ix("outline"))
+    for px, py, r in ((-11.0, -4.0, 4.2), (2.0, -6.0, 4.6), (12.0, -1.0, 3.4)):
+        c.circle(cx + px, cy + py, r, ix("shadow_core"))
+    for px, py, r in ((-13.5, -3.5, 1.9), (1.0, -7.0, 2.1), (10.0, -3.5, 1.7)):
+        c.circle(cx + px, cy + py, r, ix("shadow_inner"))
+        c.set(int(cx + px - 1), int(cy + py - 2), ix("white_spark"))
+    # It keeps working on you: bubbles of it boiling off the top.
+    for px, py in ((-16.0, -8.0), (-2.0, -12.0), (11.0, -8.5), (17.0, -3.0)):
+        c.circle(cx + px, cy + py, 2.2, ix("outline"))
+        c.circle(cx + px, cy + py, 1.5, ix("green_spark"))
+        c.set(int(cx + px - 1), int(cy + py - 1), ix("white_spark"))
+    for x0 in (-13.5, -1.0, 11.0):
+        for k in range(7):
+            t = k / 6.0
+            ys = int(cy - 15.0 - k * 0.9)
+            xs = int(round(cx + x0 + 2.6 * math.sin(t * 5.0)))
+            c.set(xs, ys, ix("green_spark"))
+            c.set(xs, ys + 1, ix("grn_mid"))
+
+    # The pool it lays down, with the 便便 parent cooking in it.
+    c.ellipse(cx - 2.0, cy + 16.0, 17.0, 6.0, ix("outline"))
+    c.ellipse(cx - 2.0, cy + 16.0, 16.0, 5.1, ix("murk_dark"))
+    c.ellipse(cx - 2.0, cy + 15.6, 14.5, 4.1, ix("murk_mid"))
+    for dx, dy, r in ((-10, -1, 1.8), (-3, 2, 1.5), (7, 1, 2.0), (11, -2, 1.4)):
+        c.circle(cx + dx, cy + dy + 16.0, r, ix("murk_light"))
+        c.set(int(cx + dx), int(cy + dy + 15.0), ix("leaf_light"))
+    px, py = cx + 5.0, cy + 12.0
+    c.circle(px, py, 5.4, ix("outline"))
+    c.circle(px, py, 4.6, ix("choco_dark"))
+    c.circle(px - 1.0, py - 1.0, 3.2, ix("choco_mid"))
+    c.circle(px - 1.8, py - 1.8, 1.6, ix("choco_light"))
+    c.set(int(px - 2), int(py - 2), ix("cream"))
+    c.set(int(px + 3), int(py + 2), ix("leaf_mid"))
+
+    # The 安抚 parent's enemy: eyes shut, its will already leaving it. Painted
+    # pale tan, because a brown lump next to a brown pellet is two lumps.
+    hx, hy = cx - 14.0, cy + 11.0
+    c.ellipse(hx, hy, 9.5, 6.5, ix("outline"))
+    c.ellipse(hx, hy, 8.6, 5.7, ix("tan_dark"))
+    c.ellipse(hx - 1.0, hy - 1.0, 7.2, 4.4, ix("tan_mid"))
+    c.ellipse(hx - 2.0, hy - 2.4, 4.6, 2.4, ix("tan_light"))
+    c.ellipse(hx + 7.0, hy - 4.0, 2.4, 1.7, ix("outline"))
+    c.ellipse(hx + 7.0, hy - 4.0, 1.4, 0.9, ix("pink_mid"))
+    c.ellipse(hx + 7.5, hy + 1.0, 2.2, 1.0, ix("outline"))
+    c.hline(int(hx - 5), int(hx - 2), int(hy), ix("outline"))
+    c.hline(int(hx + 1), int(hx + 4), int(hy + 1), ix("outline"))
+    c.set(int(hx), int(hy + 3), ix("outline"))
+    c.set(int(hx - 9.0), int(cy + 3.0), ix("brass_shadow"))
+    c.set(int(hx - 10.0), int(cy + 1.0), ix("ui_gold"))
+    c.set(int(hx - 11.0), int(cy - 0.5), ix("ui_gold_light"))
+
+
+def em_beast_king(c, cx, cy, acc):
+    """16 百兽盟主 -- 感化 + 利爪: a crowned capybara and its two empowered kin."""
+    fuse_halo(c, cx, cy)
+
+    # 利爪's slashes, heraldic now: a "V" flaring up behind the crown. Painted
+    # in orange-under-gold, because plain gold has no contrast against the
+    # wheat tint every fused card sits on.
+    for side in (-1, 1):
+        for k in range(2):
+            x0 = cx + side * (8.0 + k * 5.0)
+            x1 = cx + side * (21.0 + k * 2.0)
+            for j in range(13):
+                u = j / 12.0
+                x = x0 + (x1 - x0) * u
+                y = cy - 3.0 - 12.0 * u
+                c.set(int(round(x)), int(round(y)) + 1, ix("orange_dark"))
+                c.set(int(round(x)), int(round(y)), ix("ui_gold" if k else "ui_gold_light"))
+
+    # The retinue: two small capybaras, each with a buff arrow over its head.
+    for side in (-1, 1):
+        ax, ay = cx + side * 20.0, cy + 15.0
+        c.blob(ax, ay, 7.5, 5.5, ix("outline"), n=4.0)
+        c.blob(ax, ay, 6.5, 4.6, ix("tan_dark"), n=4.0)
+        c.blob(ax - side * 0.8, ay - 1.2, 4.8, 3.0, ix("tan_mid"), n=4.0)
+        c.ellipse(ax - side * 6.0, ay - 3.5, 2.0, 1.4, ix("outline"))
+        c.ellipse(ax - side * 6.0, ay - 3.5, 1.1, 0.7, ix("pink_mid"))
+        c.set(int(ax - side * 2.5), int(ay - 1), ix("outline"))
+        c.set(int(ax + side * 1.5), int(ay - 1), ix("outline"))
+        c.set(int(ax + side * 1), int(ay + 2.5), ix("brn_shadow"))
+        by = ay - 13.0
+        fill_poly(c, [(ax - 4.6, by + 8.0), (ax, by), (ax + 4.6, by + 8.0)],
+                  ix("outline"))
+        fill_poly(c, [(ax - 2.8, by + 6.8), (ax, by + 2.2), (ax + 2.8, by + 6.8)],
+                  ix("ember_yellow"))
+
+    # The king.
+    c.blob(cx, cy + 5.0, 11.5, 8.5, ix("outline"), n=4.0)
+    c.blob(cx, cy + 5.0, 10.5, 7.5, ix("brn_mid2"), n=4.0)
+    c.blob(cx, cy + 3.5, 8.8, 5.8, ix("brn_hi"), n=4.0)
+    c.blob(cx - 1.0, cy + 1.5, 6.0, 3.2, ix("brn_hl"), n=4.0)
+    c.blob(cx, cy + 9.0, 5.2, 2.8, ix("brn_belly"), n=4.0)
+    c.hline(int(cx - 4), int(cx + 4), int(cy + 10), ix("tan_belly"))
+    for side in (-1, 1):
+        c.ellipse(cx + side * 10.0, cy + 1.0, 2.5, 1.7, ix("outline"))
+        c.ellipse(cx + side * 10.0, cy + 1.0, 1.5, 0.9, ix("pink_mid"))
+        c.hline(int(cx + side * 7), int(cx + side * 2), int(cy + 3), ix("outline"))
+        c.set(int(cx + side * 4), int(cy + 2), ix("white_spark"))
+    c.set(int(cx - 1), int(cy + 10), ix("outline"))
+    c.set(int(cx + 1), int(cy + 10), ix("outline"))
+
+    # The 感化 crown: narrow, and sitting on the skull's crown line rather than
+    # ringing the whole head -- a wreath is not a crown.
+    band = cy - 8.0
+    for dx, hgt in ((-7, 7), (0, 10), (7, 7)):
+        fill_poly(c, [(cx + dx - 3.4, band + 4.0), (cx + dx + 3.4, band + 4.0),
+                      (cx + dx, band + 4.0 - hgt)], ix("outline"))
+        fill_poly(c, [(cx + dx - 2.3, band + 3.6), (cx + dx + 2.3, band + 3.6),
+                      (cx + dx, band + 4.4 - hgt)], ix("ui_gold"))
+    c.round_rect(int(cx - 9), int(band), 18, 5, 1, ix("outline"))
+    c.round_rect(int(cx - 8), int(band + 1), 16, 3, 1, ix("ui_gold"))
+    c.hline(int(cx - 7), int(cx + 7), int(band + 1), ix("ui_gold_light"))
+    c.hline(int(cx - 7), int(cx + 7), int(band + 4), ix("brass_dark"))
+    for dx in (-6, 6):
+        c.set(int(cx + dx), int(band + 2), ix("red_mid"))
+    c.set(int(cx), int(band + 2), ix("cherry_mid"))
+    spark(c, cx - 13, cy - 15, 2.6, ix("white_spark"))
+    spark(c, cx + 13, cy - 15, 2.6, ix("ui_gold_light"))
+
+
+def em_gale_siphon(c, cx, cy, acc):
+    """17 疾风吸取 -- 快腿 + 磁吸: a vortex hauling loot into a sprinting paw."""
+    fuse_halo(c, cx, cy)
+
+    # One inward spiral, drawn as three arcs that hand over to each other: the
+    # radius drops every segment, which is the only thing that makes a set of
+    # arcs read as a vortex rather than as a ring.
+    spiral = ((22.0, 18.5, 150.0, 250.0, 3.0, "cyan_mid"),
+              (15.5, 13.0, 250.0, 350.0, 2.6, "cyan_light"),
+              (9.5, 8.0, 350.0, 445.0, 2.0, "white_spark"))
+    for rx, ry, a0, a1, sr, col in spiral:
+        stamp_arc(c, cx, cy, rx, ry, a0, a1, sr, ix(col),
+                  taper=lambda u: 0.85 - 0.25 * u)
+
+    # The 快腿 paw, in gold: this is the card that owns both halves.
+    px, py = cx, cy + 1.0
+    c.blob(px, py + 3.5, 6.5, 4.6, ix("outline"), n=4.0)
+    c.blob(px, py + 3.5, 5.6, 3.7, ix("ui_gold"), n=4.0)
+    c.blob(px - 0.8, py + 2.6, 3.6, 2.0, ix("ui_gold_light"), n=4.0)
+    for tx, ty, r in ((-5.5, -4.5, 2.8), (-1.8, -6.3, 3.0),
+                      (1.8, -6.3, 3.0), (5.5, -4.5, 2.8)):
+        c.circle(px + tx, py + ty, r, ix("outline"))
+        c.circle(px + tx, py + ty, r - 0.7, ix("ui_gold"))
+        c.circle(px + tx - 0.4, py + ty - 0.4, r - 1.3, ix("ui_gold_light"))
+
+    # Loot riding the spiral in: 磁吸's coins, now with a vortex to ride.
+    for deg, rr in ((214.0, 21.5), (288.0, 21.0), (352.0, 15.0), (415.0, 14.5)):
+        rad = math.radians(deg)
+        ccx, ccy = cx + rr * math.cos(rad), cy + rr * math.sin(rad)
+        txx, tyy = math.sin(rad), -math.cos(rad)
+        for k in (4.2, 5.8):
+            c.set(int(round(ccx + txx * k)), int(round(ccy + tyy * k)),
+                  ix("white_spark") if k < 5.0 else ix("cyan_light"))
+        c.circle(ccx, ccy, 3.6, ix("outline"))
+        c.circle(ccx, ccy, 2.9, ix("ui_gold"))
+        c.circle(ccx - 0.6, ccy - 0.6, 1.5, ix("ui_gold_light"))
+        c.set(int(ccx + 1.4), int(ccy + 1.4), ix("brass_dark"))
+
+
+def em_geyser_mine(c, cx, cy, acc):
+    """18 沸泉地雷 -- 水柱 + 便便: a buried trap, and what happens when it is stepped on."""
+    fuse_halo(c, cx, cy)
+
+    # Ground, banked so the plate sits in it rather than on a pancake.
+    c.ellipse(cx, cy + 19.0, 25.0, 5.0, ix("outline"))
+    c.ellipse(cx, cy + 19.0, 24.0, 4.2, ix("tan_deep"))
+    c.ellipse(cx, cy + 18.6, 23.0, 3.4, ix("tan_mid"))
+    for dx in (-18, -12, 9, 17):
+        c.set(int(cx + dx), int(cy + 19), ix("tan_shadow"))
+
+    # The mine: a studded steel plate, flat and low, with the 便便 payload
+    # sitting proud of it -- a payload flush in the middle reads as an eye.
+    mx, my = cx - 7.0, cy + 13.0
+    c.ellipse(mx, my, 15.0, 5.2, ix("outline"))
+    c.ellipse(mx, my, 14.0, 4.4, ix("steel_dark"))
+    c.ellipse(mx, my - 0.6, 13.0, 3.6, ix("steel_mid"))
+    c.ellipse(mx, my - 1.2, 11.5, 2.6, ix("steel_hi"))
+    for dx in (-11, -6, 6, 11):
+        c.set(int(mx + dx), int(my - 1), ix("steel_shadow"))
+    px, py = mx - 8.0, my - 2.5
+    c.circle(px, py, 4.8, ix("outline"))
+    c.circle(px, py, 4.0, ix("choco_dark"))
+    c.circle(px - 0.8, py - 0.8, 2.6, ix("choco_mid"))
+    c.circle(px - 1.6, py - 1.6, 1.3, ix("choco_light"))
+    c.set(int(px - 2), int(py - 2), ix("cream"))
+    # The trigger, armed and visible.
+    c.circle(mx + 9.0, my - 2.4, 2.4, ix("outline"))
+    c.circle(mx + 9.0, my - 2.4, 1.5, ix("red_mid"))
+    c.set(int(mx + 9), int(my - 4), ix("orange_mid"))
+
+    # The eruption: 水柱's column, but as a jet -- pinched at the nozzle,
+    # flaring into a plume where the charge goes off.
+    top, bot = cy - 13.0, cy + 12.0
+    for j in range(int(top), int(bot) + 1):
+        t = min(1.0, max(0.0, (j - top) / (bot - top)))
+        mid = cx - 7.0 + 2.6 * math.sin((1.0 - t) * 4.2)
+        half = 2.4 + 6.0 * max(0.0, (1.0 - t) - 0.3) / 0.7
+        c.hline(int(mid - half - 1), int(mid + half + 1), j, ix("cyan_dark"))
+        c.hline(int(mid - half), int(mid + half), j, ix("cyan_mid"))
+        c.hline(int(mid - half * 0.55), int(mid + half * 0.35), j, ix("cyan_light"))
+        if half > 3.4:
+            c.hline(int(mid - half * 0.22), int(mid + half * 0.08), j,
+                    ix("white_spark"))
+    for dx, dy, r in ((-5, -6, 2.2), (6, -2, 1.8), (1, 4, 2.0)):
+        c.circle(cx - 7 + dx, cy + dy, r, ix("cyan_light"))
+        c.set(int(cx - 7 + dx - 1), int(cy + dy - 1), ix("white_spark"))
+    for side in (-1, 1):
+        c.circle(cx - 7 + side * 12.0, cy + 10.0, 2.8, ix("cyan_dark"))
+        c.circle(cx - 7 + side * 12.0, cy + 10.0, 2.0, ix("cyan_light"))
+        c.set(int(cx - 7 + side * 13), int(cy + 6), ix("cyan_mid"))
+        c.set(int(cx - 7 + side * 16), int(cy + 7), ix("cyan_light"))
+
+    # The burst: eight long shards over eight short ones, so "double damage"
+    # is legible without a number.
+    bx, by = cx - 7.0, cy - 17.0
+    for deg in range(0, 360, 45):
+        spike(c, bx, by, deg, 5.0, 9.0, 2.6, "orange_dark")
+    for deg in range(22, 360, 45):
+        spike(c, bx, by, deg, 4.4, 7.0, 1.9, "ember_yellow")
+    c.circle(bx, by, 4.2, ix("orange_mid"))
+    c.circle(bx, by, 2.8, ix("ember_yellow"))
+    c.circle(bx, by, 1.3, ix("white_spark"))
+    for dx, dy in ((-9, -7), (9, -7), (11, 4)):
+        c.set(int(bx + dx), int(by + dy), ix("red_mid"))
+
+    # Footprints walking in on the right: the trap needs somebody to step on it.
+    for fx, fy in ((cx + 14.0, cy + 20.0), (cx + 19.0, cy + 17.5)):
+        c.ellipse(fx, fy, 2.6, 1.8, ix("brn_shadow"))
+        for k in (-2, 0, 2):
+            c.set(int(fx + k), int(fy - 2.4), ix("brn_shadow"))
+
+
+def em_whirl_charge(c, cx, cy, acc):
+    """19 回旋冲角 -- 铁尾 + 冲撞: a spinning charge that clears the ring."""
+    fuse_halo(c, cx, cy)
+
+    # Spin trails, each with an arrowhead so the sweep has a direction.
+    for rx, ry, a0, a1, sr, col in ((20.5, 18.0, 150.0, 275.0, 2.8, "cyan_light"),
+                                    (15.0, 13.5, 330.0, 452.0, 2.3, "white_spark")):
+        stamp_arc(c, cx, cy, rx, ry, a0, a1, sr, ix(col),
+                  taper=lambda u: 0.62 + 0.45 * math.sin(math.pi * u) ** 0.45)
+        rad = math.radians(a1)
+        ex = cx + rx * math.cos(rad)
+        ey = cy + ry * math.sin(rad)
+        tx, ty = -rx * math.sin(rad), ry * math.cos(rad)
+        n = max(1e-3, math.hypot(tx, ty))
+        tx, ty = tx / n, ty / n
+        nx, ny = -ty, tx
+        fill_poly(c, [(ex + tx * 5.0, ey + ty * 5.0),
+                      (ex + nx * 3.4, ey + ny * 3.4),
+                      (ex - nx * 3.4, ey - ny * 3.4)], ix(col))
+
+    # The curled body, spinning: 冲撞's loaf rolled into a ball.
+    bx, by = cx - 1.0, cy + 1.0
+    c.blob(bx, by, 11.5, 10.0, ix("outline"), n=4.0)
+    c.blob(bx, by, 10.5, 9.0, ix("brn_deep"), n=4.0)
+    c.blob(bx - 0.5, by - 1.0, 9.0, 7.0, ix("brn_mid2"), n=4.0)
+    c.blob(bx - 2.0, by - 3.0, 6.0, 4.0, ix("brn_hi"), n=4.0)
+    for k in range(3):
+        stamp_arc(c, bx - 1.0, by, 8.0 - k * 2.0, 6.5 - k * 1.6, 150.0, 250.0,
+                  1.0, ix("brn_hl"))
+    # Head tucked in at the front of the roll, snout clear of the ball.
+    c.round_rect(int(cx + 5), int(cy + 4), 11, 7, 3, ix("outline"))
+    c.round_rect(int(cx + 6), int(cy + 5), 10, 5, 2, ix("brn_belly"))
+    c.hline(int(cx + 7), int(cx + 14), int(cy + 5), ix("tan_belly"))
+    c.circle(cx + 15.0, cy + 7.0, 1.6, ix("outline"))
+    c.hline(int(cx + 6), int(cx + 9), int(cy + 3), ix("outline"))
+    c.set(int(cx + 8), int(cy + 2), ix("white_spark"))
+    c.ellipse(cx + 4.0, cy - 6.5, 2.6, 1.8, ix("outline"))
+    c.ellipse(cx + 4.0, cy - 6.5, 1.5, 1.0, ix("pink_mid"))
+
+    # The horn: an ivory curl, thick where it leaves the skull and clear of the
+    # body's silhouette -- 尖牙's teeth colour, because a horn has to look hard.
+    # The four ridges are what stop it reading as a plain shell.
+    for r, col in ((5.6, "outline"), (4.4, "tan_deep"), (3.0, "tan_light"),
+                   (1.6, "cream")):
+        stamp_arc(c, cx - 6.0, cy - 8.0, 9.0, 8.0, 352.0, 176.0, r, ix(col),
+                  taper=lambda u: 1.0 - 0.68 * u)
+    for deg in (22.0, 62.0, 102.0, 142.0):
+        rad = math.radians(deg)
+        c.circle(cx - 6.0 + 10.4 * math.cos(rad), cy - 8.0 + 9.4 * math.sin(rad),
+                 0.9, ix("tan_deep"))
+
+    # The 铁尾 parent, swung out on the end of the spin.
+    c.round_rect(int(cx + 3), int(cy + 1), 11, 4, 2, ix("outline"))
+    c.round_rect(int(cx + 4), int(cy + 2), 10, 2, 1, ix("steel_dark"))
+    tx, ty = cx + 12.0, cy + 3.0
+    c.circle(tx, ty, 5.5, ix("outline"))
+    c.circle(tx, ty, 4.6, ix("steel_dark"))
+    c.circle(tx - 0.8, ty - 0.8, 3.4, ix("steel_mid"))
+    c.circle(tx - 1.6, ty - 1.6, 1.7, ix("steel_hi"))
+    c.set(int(tx - 2), int(ty - 2), ix("steel_glint"))
+
+    # What the sweep is doing to the crowd.
+    for deg, rr in ((35.0, 19.5), (165.0, 20.5), (262.0, 19.5)):
+        rad = math.radians(deg)
+        ex = cx + rr * math.cos(rad)
+        ey = cy + rr * math.sin(rad)
+        c.circle(ex + math.cos(rad) * 4.0, ey + math.sin(rad) * 4.0, 2.4,
+                 ix("white_spark"))
+        c.circle(ex, ey, 3.6, ix("outline"))
+        c.circle(ex, ey, 2.8, ix("grey_mid"))
+        c.circle(ex - 0.6, ey - 0.6, 1.7, ix("grey_light"))
+        c.set(int(ex - 1), int(ey), ix("outline"))
+        c.set(int(ex + 1), int(ey - 1), ix("outline"))
+
+
+# ---------------------------------------------------------------------------
 # Card assembly
 # ---------------------------------------------------------------------------
 
@@ -598,52 +1172,91 @@ CARDS = [
     ("快腿", KIND_PASSIVE, em_swift),
     ("磁吸", KIND_PASSIVE, em_magnet),
     ("利爪", KIND_PASSIVE, em_claws),
+
+    # The fused eight. Order and ids are game.h CARD_FUSE_*; everything from
+    # CARD_BASE_COUNT on is drawn as a gold plate (see build_card).
+    ("掠食突袭", KIND_PHYS,    em_predator_rush),
+    ("荆棘铁壁", KIND_PHYS,    em_thorn_bastion),
+    ("潮汐双炮", KIND_MAGIC,   em_tidal_twin),
+    ("恶臭香氛", KIND_MAGIC,   em_miasma),
+    ("百兽盟主", KIND_SUPPORT, em_beast_king),
+    ("疾风吸取", KIND_PASSIVE, em_gale_siphon),
+    ("沸泉地雷", KIND_MAGIC,   em_geyser_mine),
+    ("回旋冲角", KIND_PHYS,    em_whirl_charge),
 ]
 
 
-def build_card(kind, emblem, name=""):
-    """One card: the shared physical frame plus one emblem."""
+def build_card(kind, emblem, name="", fuse=False):
+    """One card: the shared physical frame plus one emblem.
+
+    `fuse` swaps the frame's materials for the gold plate -- identical geometry,
+    identical call order, brass rim, gold name band and the twin-ring badge --
+    so the twelve base cards and the eight fused ones are the same object at two
+    tiers. Nothing about the layout moves: the overlay the engine draws (level
+    pips in the footer, the fusion mark over the top-right corner) lands exactly
+    where it always did.
+    """
     c = Canvas(CARD_W, CARD_H)
     acc, acc_deep = KIND_ACCENT[kind]
+    if fuse:
+        rim, rim_hi, rim_sh = "brass_mid", "brass_hi", "brass_shadow"
+        band, band_strip, band_deep = "brass_dark", "ui_gold", "brass_shadow"
+        win_dark, win_light = "brass_dark", "wheat_light"
+        bracket, chip = "wheat_light", "ui_gold_light"
+    else:
+        rim, rim_hi, rim_sh = "ui_frame", "ui_frame_light", "wood_dark"
+        band, band_strip, band_deep = "wood_dark", acc, acc_deep
+        win_dark, win_light = "wood_dark", "tan_light"
+        bracket, chip = "ui_gold_light", "ui_gold"
 
     # --- edge: 2px dark, then 2px lighter bevel -----------------------------
     c.round_rect(0, 0, CARD_W, CARD_H, CORNER_R, ix("outline"))
-    c.round_rect(2, 2, CARD_W - 4, CARD_H - 4, 3, ix("ui_frame"))
-    c.hline(3, CARD_W - 4, 2, ix("ui_frame_light"))
-    c.vline(2, 3, CARD_H - 4, ix("ui_frame_light"))
-    c.hline(3, CARD_W - 4, CARD_H - 3, ix("wood_dark"))
-    c.vline(CARD_W - 3, 5, CARD_H - 4, ix("wood_dark"))
+    c.round_rect(2, 2, CARD_W - 4, CARD_H - 4, 3, ix(rim))
+    c.hline(3, CARD_W - 4, 2, ix(rim_hi))
+    c.vline(2, 3, CARD_H - 4, ix(rim_hi))
+    c.hline(3, CARD_W - 4, CARD_H - 3, ix(rim_sh))
+    c.vline(CARD_W - 3, 5, CARD_H - 4, ix(rim_sh))
+    if fuse:
+        # The fourth rim pixel: a gold fillet inside the brass, which the base
+        # plates do not carry.
+        c.hline(4, CARD_W - 5, 3, ix("ui_gold"))
+        c.vline(3, 4, CARD_H - 5, ix("ui_gold"))
+        c.hline(4, CARD_W - 5, CARD_H - 4, ix("ui_gold"))
+        c.vline(CARD_W - 4, 4, CARD_H - 5, ix("ui_gold"))
 
     # Golden card corner brackets
     for (cx0, cy0) in ((3, 3), (CARD_W - 6, 3), (3, CARD_H - 6), (CARD_W - 6, CARD_H - 6)):
-        c.rect(cx0, cy0, 3, 3, ix("ui_gold_light"))
+        c.rect(cx0, cy0, 3, 3, ix(bracket))
         c.set(cx0 + 1, cy0 + 1, ix("white_spark"))
 
     # --- face: warm parchment cardstock (ZERO PURPLE!) ---
     c.round_rect(FACE_X, FACE_X, FACE_W, FACE_H, 2, ix("tan_belly"))
 
     # --- name band: deep wood banner with elemental accent ---
-    c.rect(FACE_X, HEADER_Y0, FACE_W, HEADER_Y1 - HEADER_Y0 + 1, ix("wood_dark"))
-    c.rect(FACE_X, HEADER_Y1 - ACCENT_H + 1, FACE_W, ACCENT_H - 1, ix(acc))
-    c.rect(FACE_X, HEADER_Y1, FACE_W, 1, ix(acc_deep))
+    c.rect(FACE_X, HEADER_Y0, FACE_W, HEADER_Y1 - HEADER_Y0 + 1, ix(band))
+    c.rect(FACE_X, HEADER_Y1 - ACCENT_H + 1, FACE_W, ACCENT_H - 1, ix(band_strip))
+    c.rect(FACE_X, HEADER_Y1, FACE_W, 1, ix(band_deep))
 
     # Decorative header gem in center of name band
     hx = CARD_W // 2
-    c.round_rect(hx - 8, HEADER_Y0 + 2, 16, 9, 2, ix("outline"))
-    c.round_rect(hx - 7, HEADER_Y0 + 3, 14, 7, 1, ix(acc))
-    c.round_rect(hx - 5, HEADER_Y0 + 4, 10, 4, 1, ix("white_spark"))
+    if fuse:
+        draw_fuse_badge(c)
+    else:
+        c.round_rect(hx - 8, HEADER_Y0 + 2, 16, 9, 2, ix("outline"))
+        c.round_rect(hx - 7, HEADER_Y0 + 3, 14, 7, 1, ix(acc))
+        c.round_rect(hx - 5, HEADER_Y0 + 4, 10, 4, 1, ix("white_spark"))
 
     # --- art window: clean warm ivory arena ---
     c.rect(ART_X0, ART_Y0, ART_W, ART_H, ix("cream"))
-    c.hline(ART_X0, ART_X0 + ART_W - 1, ART_Y0, ix("wood_dark"))
-    c.vline(ART_X0, ART_Y0 + 1, ART_Y0 + ART_H - 1, ix("wood_dark"))
-    c.hline(ART_X0 + 1, ART_X0 + ART_W - 1, ART_Y0 + ART_H - 1, ix("tan_light"))
-    c.vline(ART_X0 + ART_W - 1, ART_Y0 + 1, ART_Y0 + ART_H - 2, ix("tan_light"))
+    c.hline(ART_X0, ART_X0 + ART_W - 1, ART_Y0, ix(win_dark))
+    c.vline(ART_X0, ART_Y0 + 1, ART_Y0 + ART_H - 1, ix(win_dark))
+    c.hline(ART_X0 + 1, ART_X0 + ART_W - 1, ART_Y0 + ART_H - 1, ix(win_light))
+    c.vline(ART_X0 + ART_W - 1, ART_Y0 + 1, ART_Y0 + ART_H - 2, ix(win_light))
 
     # Inner window corner accents
     for wx, wy in ((ART_X0 + 2, ART_Y0 + 2), (ART_X0 + ART_W - 4, ART_Y0 + 2),
                    (ART_X0 + 2, ART_Y0 + ART_H - 4), (ART_X0 + ART_W - 4, ART_Y0 + ART_H - 4)):
-        c.rect(wx, wy, 2, 2, ix("ui_gold"))
+        c.rect(wx, wy, 2, 2, ix(chip))
 
     before = list(c.px)
     emblem(c, EM_CX, EM_CY, acc)
@@ -658,7 +1271,8 @@ def build_card(kind, emblem, name=""):
 
     # --- pip band: footer ---
     c.rect(FACE_X, FOOTER_Y0, FACE_W, FOOTER_H, ix("wood_dark"))
-    c.hline(FACE_X, FACE_X + FACE_W - 1, FOOTER_Y0, ix(acc))
+    c.hline(FACE_X, FACE_X + FACE_W - 1, FOOTER_Y0,
+            ix("ui_gold") if fuse else ix(acc))
     return c
 
 
@@ -730,7 +1344,8 @@ def main():
         assert names == [n for n, _k, _e in CARDS], \
             f"card order drifted from source/globals.c: {names}"
 
-    cards = [build_card(kind, emblem, name) for name, kind, emblem in CARDS]
+    cards = [build_card(kind, emblem, name, fuse=(i >= CARD_BASE_COUNT))
+             for i, (name, kind, emblem) in enumerate(CARDS)]
     assert len(cards) == CARD_COUNT, \
         f"expected {CARD_COUNT} cards, got {len(cards)}"
 
@@ -738,7 +1353,7 @@ def main():
     for c in cards:
         blob += c.to_bmp8()
     expect = CARD_W * CARD_H * CARD_COUNT
-    assert expect == 82944, "card geometry changed; update the C side too"
+    assert expect == 138240, "card geometry changed; update the C side too"
     assert len(blob) == expect, \
         f"atlas is {len(blob)} bytes, expected {expect}"
 
@@ -749,17 +1364,19 @@ def main():
 
     path = os.path.join(out, "card_atlas.bin")
     gc.write_bin(path, bytes(blob))
-    print(f"card_atlas: {len(cards)} cards, {CARD_W}x{CARD_H}, "
+    print(f"card_atlas: {len(cards)} cards ({CARD_BASE_COUNT} base + "
+          f"{len(cards) - CARD_BASE_COUNT} fused), {CARD_W}x{CARD_H}, "
           f"{len(blob)} bytes ({len(blob) // len(cards)} B/card), "
           f"{zeros[0]} transparent px/card")
     print("card_atlas ->", path)
 
-    labels = [f"{i} {name}" for i, (name, _k, _e) in enumerate(CARDS)]
+    labels = [f"{i} {name}" + ("*" if i >= CARD_BASE_COUNT else "")
+              for i, (name, _k, _e) in enumerate(CARDS)]
     if not install_label_font():
         labels = [f"{i}" for i in range(len(CARDS))]
     gc.preview_scale(cards, os.path.join(out, "preview_cards.png"),
-                     scale=3, cols=6, labels=labels,
-                     title="Capybara Skill Cards 0..11")
+                     scale=3, cols=5, labels=labels,
+                     title="Capybara Skill Cards 0..19 (12 base + 8 fused *)")
 
 
 if __name__ == "__main__":

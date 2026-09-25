@@ -31,15 +31,21 @@ ANIM_ORDER = [
     ("hurt", 2),
 ]
 
+# Four-tone fur ramps. The extra two stops (fur_hi, fur_shadow) are what the
+# volume pass paints the lit rim and the contact shadow with; without them the
+# body ends up reading as one flat tone however good the silhouette is.
 HEROES = [
     ("hero_m", "阿棕", {
         "outline": "outline",
         "fur_main": "brn_mid",
-        "fur_dark": "brn_dark",
-        "fur_light": "brn_light",
+        "fur_dark": "brn_deep",
+        "fur_light": "brn_hi",
+        "fur_hi": "brn_hl",
+        "fur_shadow": "brn_shadow",
         "fur_belly": "brn_belly",
         "ear_inner": "brn_shadow",
         "snout_col": "brn_light",
+        "blush_col": "blush",
         "nostril": "black",
         "eye_col": "black",
         "incisor": "white",
@@ -49,11 +55,14 @@ HEROES = [
     ("hero_f", "阿奶", {
         "outline": "outline",
         "fur_main": "tan_mid",
-        "fur_dark": "tan_dark",
-        "fur_light": "tan_light",
+        "fur_dark": "tan_deep",
+        "fur_light": "tan_hi",
+        "fur_hi": "tan_hl",
+        "fur_shadow": "tan_shadow",
         "fur_belly": "cream",
         "ear_inner": "tan_shadow",
         "snout_col": "tan_light",
+        "blush_col": "pink_mid",
         "nostril": "black",
         "eye_col": "black",
         "incisor": "white",
@@ -61,6 +70,45 @@ HEROES = [
         "item": "sprout",
     }),
 ]
+
+
+def shade_volume(c, hi, light, dark, deep, shade_set):
+    """Give an already-drawn silhouette a lit top and a shaded underside, in
+    one pass over the pixels.
+
+    This is the single change that stops the capybaras reading as flat
+    stickers. The shapes were always fine -- what was missing is that a body
+    drawn in one fur tone has no direction to it, and at 32x32 there is no room
+    for hand-placed shading across sixteen frames x eight directions. Doing it
+    as a per-column pass over whatever the pose painter produced means a new
+    pose gets correct volume for free.
+
+    Only pixels already in `shade_set` (the fur tones) are considered or
+    written, so the eyes, teeth, sweat drops and the head accessory survive
+    untouched -- they are drawn before this runs and sit inside the silhouette.
+
+    Order within a column, top to bottom:
+      1px highlight rim -> 1px light -> body tone -> 2px dark -> deepest tone
+    """
+    w, h = c.w, c.h
+    src = list(c.px)
+
+    def paintable(x, y):
+        return src[y * w + x] in shade_set
+
+    for x in range(w):
+        col = [y for y in range(h) if paintable(x, y)]
+        if len(col) < 6:
+            continue
+        top, bot = col[0], col[-1]
+        c.set(x, top, hi)
+        if top + 1 <= bot and paintable(x, top + 1):
+            c.set(x, top + 1, light)
+        if paintable(x, bot):
+            c.set(x, bot, deep)
+        for y in (bot - 1, bot - 2):
+            if y > top and paintable(x, y):
+                c.set(x, y, dark)
 
 
 def draw_accessory(c, th, hx, hy, direction):
@@ -269,11 +317,15 @@ def render_capybara(th, direction, anim, f):
         c.round_rect(cx - 7, hy, 14, 9, 2, fur_m)
         c.hline(cx - 5, cx + 4, hy, fur_l)
 
+        # Ears: small round flaps on top of the head, drawn a size up from a
+        # nub so the head has a readable silhouette against the body.
         ear_twitch = -1 if (anim == "idle" and f == 2) else 0
-        c.rect(cx - 8, hy + ear_twitch, 2, 3, fur_m)
+        c.round_rect(cx - 9, hy - 1 + ear_twitch, 4, 4, 1, fur_m)
         c.set(cx - 8, hy + 1 + ear_twitch, ear_in)
-        c.rect(cx + 6, hy + ear_twitch, 2, 3, fur_m)
-        c.set(cx + 7, hy + 1 + ear_twitch, ear_in)
+        c.set(cx - 9, hy + ear_twitch, fur_l)
+        c.round_rect(cx + 5, hy - 1 + ear_twitch, 4, 4, 1, fur_m)
+        c.set(cx + 6, hy + 1 + ear_twitch, ear_in)
+        c.set(cx + 8, hy + ear_twitch, fur_l)
 
         # Eyes: Zen slit eye, NO round white highlights!
         if anim == "hurt":
@@ -310,10 +362,22 @@ def render_capybara(th, direction, anim, f):
             c.hline(cx + 3, cx + 4, hy + 4, eye_c)
             c.hline(cx + 3, cx + 4, hy + 3, fur_d)
 
+        # Shoulder line: one dark row where the head meets the body. Without it
+        # the front view is a single loaf and the head reads as a bump.
+        c.hline(cx - 7, cx + 6, hy + 9, fur_d)
+        c.set(cx - 8, hy + 9, 0)
+        c.set(cx + 7, hy + 9, 0)
+
         c.round_rect(cx - 3, hy + 3, 6, 6, 2, fur_l)
         c.set(cx - 2, hy + 6, nos_c)
         c.set(cx + 1, hy + 6, nos_c)
         c.hline(cx - 2, cx + 1, hy + 8, fur_d)
+        # Cheeks: two blush dots, which is what makes the face read as a face
+        # at this size rather than as two dots on a loaf.
+        c.set(cx - 6, hy + 6, ix(th["blush_col"]))
+        c.set(cx - 6, hy + 7, ix(th["blush_col"]))
+        c.set(cx + 5, hy + 6, ix(th["blush_col"]))
+        c.set(cx + 5, hy + 7, ix(th["blush_col"]))
 
         # Front paws on lower chest
         c.round_rect(cx - 6, by + 7, 3, 4, 1, fur_m)
@@ -590,8 +654,17 @@ def render_capybara(th, direction, anim, f):
         draw_accessory(c, th, hx + 3, hy, "up")
 
     # -------------------------------------------------------------------------
-    # 6. OUTLINE PASS
+    # 6. VOLUME + OUTLINE PASSES
+    #
+    # Volume goes on before the outline: the outline grows outward from
+    # whatever is filled, so lighting the silhouette first means the rim lands
+    # on the shaded shape rather than the other way round.
     # -------------------------------------------------------------------------
+    fur_tones = {ix(th["fur_main"]), ix(th["fur_light"]), ix(th["fur_dark"]),
+                 ix(th["fur_belly"]), ix(th["snout_col"])}
+    shade_volume(c, ix(th["fur_hi"]), ix(th["fur_light"]),
+                 ix(th["fur_dark"]), ix(th["fur_shadow"]), fur_tones)
+
     src = list(c.px)
     for y in range(H):
         for x in range(W):

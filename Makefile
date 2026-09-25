@@ -54,7 +54,8 @@ NITROFSDIR	:=
 # Uses the dedicated conda environment so the host Python is never touched.
 PYTHON		:= /d/Science/Miniforge/envs/Blocksds/python.exe
 TOOLS		:= tools/gen_common.py tools/gen_heroes.py tools/gen_world.py \
-		   tools/gen_cards.py tools/gen_font.py tools/gen_audio.py
+		   tools/gen_cards.py tools/gen_font.py tools/gen_audio.py \
+		   tools/gen_ui.py tools/gen_farm.py
 
 # Integrity checks for the generated assets: file sizes against the geometry
 # the C code assumes, palette indices in range, collision maps that match their
@@ -295,19 +296,25 @@ dldipatch: $(ROM)
 #     ./build.sh --tap        same, but picks the card by touch
 #     ./build.sh --boss       auto-play until the boss appears
 #     ./build.sh --ending     jump straight to the ending
+#     ./build.sh --ui         # walk the menus: settings, tree, lobby
 #
 # They re-enter make rather than sharing the rules above because NAME drives
 # BUILDDIR, ELF, DUMP and ROM, and all of those are resolved while this file is
 # being parsed. Giving each variant its own NAME keeps its objects and ROM
 # completely separate from the release build.
 
-DEVROMS			:= autoplay menu tap boss ending
+DEVROMS			:= autoplay menu tap boss ending ui farm perf
 
 DEVROM_DEFINE_autoplay	:= -DAUTOPLAY
 DEVROM_DEFINE_menu	:= -DAUTOPLAY -DAUTOPLAY_MENU
 DEVROM_DEFINE_tap	:= -DAUTOPLAY -DAUTOPLAY_TAP_CARD
 DEVROM_DEFINE_boss	:= -DAUTOPLAY -DAUTOPLAY_BOSS
 DEVROM_DEFINE_ending	:= -DAUTOPLAY -DAUTOPLAY_ENDING
+DEVROM_DEFINE_ui	:= -DAUTOPLAY -DAUTOPLAY_UI
+DEVROM_DEFINE_farm	:= -DAUTOPLAY -DAUTOPLAY_FARM
+# The frame-budget readout: plays a battle with the per-frame work time drawn
+# over the middle of the top screen, so a screenshot is a measurement.
+DEVROM_DEFINE_perf	:= -DAUTOPLAY -DPERF_HUD
 
 .PHONY: $(DEVROMS)
 $(DEVROMS):

@@ -14,6 +14,7 @@ Exits non-zero on failure so it can gate a build.
 """
 
 import os
+import re
 import struct
 import sys
 import wave
@@ -34,6 +35,26 @@ def check(cond, msg):
 
 def size_of(path):
     return os.path.getsize(path) if os.path.exists(path) else -1
+
+
+def _source_define(header, name):
+    """Read one integer #define out of a source header, or None.
+
+    Used where an asset's geometry is owned by the C side: the point is that the
+    engine's number and the generator's output are checked against each other,
+    so neither can move without the other being noticed.
+    """
+    path = os.path.join("source", header)
+    if not os.path.exists(path):
+        return None
+    m = re.search(rf"^#define\s+{name}\s+(-?\d+)",
+                  open(path, encoding="utf-8").read(), re.M)
+    return int(m.group(1)) if m else None
+
+
+def card_count():
+    """How many card faces the engine expects. See check_sprites()."""
+    return _source_define("game.h", "CARD_COUNT")
 
 
 # ---------------------------------------------------------------------------
@@ -59,18 +80,30 @@ def check_palette():
 # ---------------------------------------------------------------------------
 # World: tile atlas + tile map per region
 #
-# The world is much larger than the screen, so it is stored as a 48-tile 16x16
+# The world is much larger than the screen, so it is stored as a 64-tile 16x16
 # atlas plus one byte per tile position rather than as pixels. These checks are
 # the ones that catch a world that would be broken on real hardware: a map byte
 # naming a tile the atlas does not have (reads past the end of the blob), an
 # atlas tile with a transparent pixel (shows as magenta), or a map with no walls
 # at all (the player walks off the world).
+#
+# The kingdom is deliberately smaller than the five battle regions, and the
+# engine binds its size at runtime (world_set_size) from the same table this
+# duplicates. A mismatch here is a map read past its end, so the sizes are
+# checked by name rather than assumed.
 # ---------------------------------------------------------------------------
 
 AREAS = ["hub", "rain", "farm", "past", "marsh", "cacao"]
 
-ATLAS_TILES = 48
+ATLAS_TILES = 64
 WORLD_COLS, WORLD_ROWS = 128, 96
+HUB_COLS, HUB_ROWS = 48, 40
+
+AREA_SIZE = {
+    "hub": (HUB_COLS, HUB_ROWS),
+    **{n: (WORLD_COLS, WORLD_ROWS)
+       for n in ("rain", "farm", "past", "marsh", "cacao")},
+}
 
 
 def check_areas():
@@ -78,6 +111,7 @@ def check_areas():
         atlas = os.path.join(GRAPHICS, f"area_{name}_atlas.bin")
         tmap = os.path.join(GRAPHICS, f"area_{name}_map.bin")
         prop = os.path.join(GRAPHICS, f"area_{name}_prop.bin")
+        cols, rows = AREA_SIZE[name]
 
         na = size_of(atlas)
         expected_atlas = ATLAS_TILES * 16 * 16
@@ -106,10 +140,10 @@ def check_areas():
                 problems.append(f"area_{name} atlas tile {t} is a flat colour")
 
         nm = size_of(tmap)
-        expected_map = WORLD_COLS * WORLD_ROWS
+        expected_map = cols * rows
         check(nm == expected_map,
               f"area_{name}_map.bin is {nm} bytes, expected {expected_map} "
-              f"({WORLD_COLS}x{WORLD_ROWS} tiles)")
+              f"({cols}x{rows} tiles)")
         np_ = size_of(prop)
         check(np_ == ATLAS_TILES,
               f"area_{name}_prop.bin is {np_} bytes, expected {ATLAS_TILES}")
@@ -136,7 +170,7 @@ def check_areas():
 
         # The spawn tile must be walkable: the engine puts both characters
         # there with no collision test.
-        mid = (WORLD_ROWS // 2) * WORLD_COLS + WORLD_COLS // 2
+        mid = (rows // 2) * cols + cols // 2
         check(not propdata[mapdata[mid]],
               f"area_{name} spawn tile is solid (characters would start in a "
               f"wall)")
@@ -144,12 +178,12 @@ def check_areas():
         # Walkability from the spawn: a large map that is 90% walled off still
         # looks fine in a screenshot and plays terribly.
         seen = set()
-        stack = [(WORLD_COLS // 2, WORLD_ROWS // 2)]
+        stack = [(cols // 2, rows // 2)]
         while stack:
             x, y = stack.pop()
-            if (x, y) in seen or not (0 <= x < WORLD_COLS and 0 <= y < WORLD_ROWS):
+            if (x, y) in seen or not (0 <= x < cols and 0 <= y < rows):
                 continue
-            if propdata[mapdata[y * WORLD_COLS + x]]:
+            if propdata[mapdata[y * cols + x]]:
                 continue
             seen.add((x, y))
             stack.extend(((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)))
@@ -194,12 +228,176 @@ def check_sprites():
     # 15 mobs x 4 frames (idle / bob / attack / hurt)
     check_sprite(os.path.join(GRAPHICS, "mob_tiles.bin"), 32, 32, 15 * 4)
 
-    # 10 bosses x 4 frames (idle / bob / attack / hurt)
-    check_sprite(os.path.join(GRAPHICS, "boss_tiles.bin"), 64, 64, 10 * 4)
+    # 10 bosses x 8 frames: the four walk poses plus the four duel poses the
+    # fight reads off body language (wind-up / signature / enraged / broken).
+    check_sprite(os.path.join(GRAPHICS, "boss_tiles.bin"), 64, 64, 10 * 8)
 
-    # Skill cards: one 72x96 picture per card, 12 cards.
-    check_sprite(os.path.join(GRAPHICS, "card_atlas.bin"), 72, 96, 12)
+    # Skill cards: one 72x96 picture per card. The count is read out of game.h
+    # rather than written here as a literal.
+    #
+    # It used to be a hardcoded 12, and that is exactly how the fusion cards
+    # went unnoticed: the engine grew a CARD_COUNT of 20 with eight fused cards
+    # that had no art at all, while the C-side card lookup bounded itself by
+    # CARD_COUNT and the atlas only held 12 -- so the first fused card drawn
+    # would have read past the end of the blob. Tying the atlas size to the
+    # engine's own count turns that class of drift into a build failure.
+    cards = card_count()
+    check(cards is not None, "game.h is missing CARD_COUNT")
+    check_sprite(os.path.join(GRAPHICS, "card_atlas.bin"), 72, 96, cards or 12)
 
+    # The farm sheet: soil (dry/wet) + 5 crops x 3 stages, padded out to 24
+    # tiles so farm.c can index it without a bounds dance. Every tile has to be
+    # non-empty, which is why the sheet is generated with no blank padding --
+    # the size check below pins that, and the sheet size is exactly the number
+    # of tiles farm.h will ask for.
+    check_sprite(os.path.join(GRAPHICS, "farm_tiles.bin"), 16, 16, 17)
+    n = size_of(os.path.join(GRAPHICS, "farm_tiles.bin"))
+    check(n == 17 * 16 * 16,
+          f"farm_tiles.bin is {n} bytes, expected {17 * 16 * 16}")
+
+
+# ---------------------------------------------------------------------------
+# The farm
+#
+# The field is drawn at runtime rather than baked into the hub map, so the
+# generated hub map has no idea it exists. These checks are what keep the two
+# from disagreeing: the rectangle farm.h draws into must be plain walkable
+# ground in the map the generator actually produced, or the player would be
+# planting crops in a pond.
+#
+# Both sides are read from their own source of truth -- farm.h for the geometry,
+# hub_layout.h for the map size -- so this cannot silently pass against a stale
+# copy of either.
+# ---------------------------------------------------------------------------
+
+def check_farm():
+    gfx = os.path.join(GRAPHICS, "farm_tiles.bin")
+    if size_of(gfx) < 0:
+        problems.append("farm_tiles.bin is missing")
+        return
+
+    src = os.path.join("source", "farm.h")
+    if not os.path.exists(src):
+        problems.append("source/farm.h is missing")
+        return
+    text = open(src, encoding="utf-8").read()
+
+    def define(name):
+        m = re.search(rf"^#define\s+{name}\s+(-?\d+)", text, re.M)
+        return int(m.group(1)) if m else None
+
+    tx = define("FARM_TILE_X")
+    ty = define("FARM_TILE_Y")
+    cols = define("FARM_COLS")
+    rows = define("FARM_ROWS")
+    if None in (tx, ty, cols, rows):
+        problems.append("farm.h is missing its geometry defines")
+        return
+
+    # The tile ids the field blits must exist in the sheet. farm.h includes the
+    # generated farm_art.h for the layout, so the numbers only live in one
+    # place; these defines are read from there.
+    art = os.path.join("source", "farm_art.h")
+    if not os.path.exists(art):
+        problems.append("source/farm_art.h is missing (run tools/gen_farm.py)")
+        return
+    art_text = open(art, encoding="utf-8").read()
+
+    def adefine(name):
+        m = re.search(rf"^#define\s+{name}\s+(-?\d+)", art_text, re.M)
+        return int(m.group(1)) if m else None
+
+    base = adefine("FARM_TILE_CROP_BASE")
+    crops = adefine("FARM_CROP_COUNT")
+    stages = adefine("FARM_STAGE_COUNT")
+    if None in (base, crops, stages):
+        problems.append("farm_art.h is missing its sheet layout defines")
+        return
+
+    # ...and the sheet must hold exactly the tiles that arithmetic reaches.
+    sheet = size_of(gfx) // (16 * 16)
+    top = base + crops * stages
+    check(sheet == top,
+          f"farm_tiles.bin holds {sheet} tiles but the layout needs {top}")
+
+    # farm.h must include the generated header rather than re-deriving it: a
+    # second copy of these numbers is exactly how the art and the code drift.
+    check("farm_art.h" in text,
+          "source/farm.h should include farm_art.h instead of hardcoding "
+          "the sheet layout")
+
+    # ...and that the rectangle is real ground in the hub map.
+    hdr = os.path.join("source", "hub_layout.h")
+    if not os.path.exists(hdr):
+        problems.append("source/hub_layout.h is missing")
+        return
+    hdr_text = open(hdr, encoding="utf-8").read()
+
+    def hdef(name):
+        m = re.search(rf"^#define\s+{name}\s+(-?\d+)", hdr_text, re.M)
+        return int(m.group(1)) if m else None
+
+    hcols = hdef("HUB_COLS")
+    hrows = hdef("HUB_ROWS")
+    if hcols is None or hrows is None:
+        problems.append("hub_layout.h is missing HUB_COLS/HUB_ROWS")
+        return
+
+    check(0 <= tx and tx + cols <= hcols and 0 <= ty and ty + rows <= hrows,
+          f"the farm rectangle {cols}x{rows} at ({tx},{ty}) is outside the "
+          f"{hcols}x{hrows} hub map")
+
+    path = os.path.join(GRAPHICS, "area_hub_map.bin")
+    if size_of(path) < 0:
+        problems.append("area_hub_map.bin is missing")
+        return
+    data = open(path, "rb").read()
+    prop = open(os.path.join(GRAPHICS, "area_hub_prop.bin"), "rb").read()
+
+    solid = 0
+    for y in range(ty, ty + rows):
+        for x in range(tx, tx + cols):
+            if y * hcols + x >= len(data):
+                continue
+            tid = data[y * hcols + x]
+            if tid < len(prop) and prop[tid]:
+                solid += 1
+    check(solid == 0,
+          f"the farm rectangle has {solid} solid tile(s) in it; "
+          f"move it in farm.h (and the comment there) to clear lawn")
+
+
+# ---------------------------------------------------------------------------
+# Full-screen UI art
+#
+# The title scene and the expedition chart are blitted as one 256x192 image
+# covering the whole play area. A short file would leave the bottom of the
+# screen showing whatever the previous frame left there, so the size is exact.
+# ---------------------------------------------------------------------------
+
+def check_ui():
+    for name in ("ui_title", "ui_worldmap"):
+        path = os.path.join(GRAPHICS, f"{name}.bin")
+        check_sprite(path, 256, 192, 1)
+
+    # The node anchors the C side draws its markers at come from the same
+    # generator that painted the biomes; a node that fell outside the image
+    # would put a marker on top of the sea.
+    hdr = os.path.join("source", "worldmap_nodes.h")
+    check(os.path.exists(hdr), "source/worldmap_nodes.h is missing")
+    if not os.path.exists(hdr):
+        return
+    text = open(hdr, encoding="utf-8").read()
+    import re
+    m = re.search(r"g_world_map_node_xy\[(\d+)\]\[2\]", text)
+    check(m is not None, "worldmap_nodes.h has no node table")
+    if not m:
+        return
+    check(int(m.group(1)) == 5,
+          f"world map has {m.group(1)} nodes, expected 5 (one per region)")
+    for (nx, ny) in re.findall(r"\{\s*(\d+),\s*(\d+)\s*\}", text):
+        check(8 <= int(nx) < 248 and 40 <= int(ny) < 184,
+              f"world map node ({nx}, {ny}) is outside the drawable area")
 
 
 # ---------------------------------------------------------------------------
@@ -370,6 +568,8 @@ def main():
     check_palette()
     check_areas()
     check_sprites()
+    check_farm()
+    check_ui()
     check_font()
     check_audio()
     check_rom()

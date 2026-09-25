@@ -166,13 +166,14 @@ void text_clear(void)
     memset(g_sub, PAL_UI_PANEL, SUB_STRIDE * VIS_ROWS);
 }
 
-// The shared grid renderer. `surf` is whichever shadow buffer the caller wants
-// the text written into.
-static void draw_text_on(uint8_t *surf, int col, int row, const char *utf8,
-                         uint8_t ink)
+// The shared renderer. `surf` is whichever shadow buffer the caller wants the
+// text written into; (px, py) is the top-left corner in PIXELS, so both the
+// grid-aligned menus and the pixel-placed buttons go through this one path.
+static void draw_text_px_on(uint8_t *surf, int origin_x, int origin_y,
+                            const char *utf8, uint8_t ink)
 {
-    int px = col * CELL_W;
-    int py = row * CELL_H;
+    int px = origin_x;
+    int py = origin_y;
     const char *s = utf8;
 
     while (*s)
@@ -180,7 +181,7 @@ static void draw_text_on(uint8_t *surf, int col, int row, const char *utf8,
         uint32_t cp = utf8_next(&s);
         if (cp == '\n')
         {
-            px = col * CELL_W;
+            px = origin_x;
             py += CELL_H;
             continue;
         }
@@ -217,7 +218,91 @@ void text_draw(int col, int row, const char *utf8, uint16_t color)
 {
     if (!g_sub)
         g_sub = text_sub_buffer();
-    draw_text_on(g_sub, col, row, utf8, (uint8_t)color);
+    draw_text_px_on(g_sub, col * CELL_W, row * CELL_H, utf8, (uint8_t)color);
+}
+
+// Free-positioned text. The grid is the right default for menus, but buttons
+// and badges are laid out in pixels, and a grid-aligned label inside a
+// pixel-sized box always sits visibly off-centre.
+void text_draw_px(int px, int py, const char *utf8, uint16_t color)
+{
+    if (!g_sub)
+        g_sub = text_sub_buffer();
+    draw_text_px_on(g_sub, px, py, utf8, (uint8_t)color);
+}
+
+// Width of a UTF-8 string in pixels (each glyph is one CELL_W-wide cell).
+int text_utf8_width(const char *utf8)
+{
+    int cols = 0;
+    const char *s = utf8;
+    while (*s)
+    {
+        uint32_t cp = utf8_next(&s);
+        if (cp == '\n')
+            break;
+        cols++;
+    }
+    return cols * CELL_W;
+}
+
+// Draw a string horizontally centred inside a pixel-space box.
+void text_draw_centered(int bx, int by, int bw, const char *utf8,
+                        uint16_t color)
+{
+    int w = text_utf8_width(utf8);
+    int x = bx + (bw - w) / 2;
+    if (x < bx)
+        x = bx;
+    text_draw_px(x, by, utf8, color);
+}
+
+// Draw a string wrapped to `wrap_cols` grid columns, starting at a cell.
+//
+// The font has no line-breaking rules and Chinese wraps between any two
+// characters, so a hard column count is both correct and sufficient. This
+// exists because several of the game's flavour lines are longer than the
+// 20-column screen, and a clipped line loses its ending -- which is exactly the
+// part that says what the region is.
+//
+// Returns the number of rows used, so a caller can lay out what follows.
+int text_draw_wrapped(int col, int row, int wrap_cols, const char *utf8,
+                      uint16_t color)
+{
+    if (wrap_cols < 1)
+        wrap_cols = 1;
+
+    // Build the line by slicing the original string: it is UTF-8, so a
+    // character offset is not a byte offset and the only safe way to break is
+    // to walk the string with the same decoder the renderer uses.
+    char line[128];
+    const char *s = utf8;
+    int rows = 0;
+
+    while (*s)
+    {
+        const char *start = s;
+        int n = 0;
+        int bytes = 0;
+        while (*s && n < wrap_cols)
+        {
+            const char *before = s;
+            uint32_t cp = utf8_next(&s);
+            if (cp == '\n')
+                break;
+            bytes += (int)(s - before);
+            n++;
+        }
+        if (n == 0)
+            break;
+        if (bytes > (int)sizeof(line) - 1)
+            bytes = (int)sizeof(line) - 1;
+        memcpy(line, start, (size_t)bytes);
+        line[bytes] = '\0';
+        text_draw(col, row + rows, line, color);
+        rows++;
+    }
+    return rows > 0 ? rows : 1;
 }
 
 // The top-screen counterpart. It deliberately does NOT clear the surface: the
@@ -226,7 +311,18 @@ void top_text_draw(int col, int row, const char *utf8, uint16_t color)
 {
     if (!g_main)
         g_main = text_main_buffer();
-    draw_text_on(g_main, col, row, utf8, (uint8_t)color);
+    draw_text_px_on(g_main, col * CELL_W, row * CELL_H, utf8, (uint8_t)color);
+}
+
+// Pixel-placed top-screen text. The in-play HUD is laid out around the world
+// view -- a vitals band, a map frame, buttons whose labels have to sit on a
+// pixel boundary inside them -- so it needs the same free positioning the sub
+// screen already had.
+void top_text_draw_px(int px, int py, const char *utf8, uint16_t color)
+{
+    if (!g_main)
+        g_main = text_main_buffer();
+    draw_text_px_on(g_main, px, py, utf8, (uint8_t)color);
 }
 
 void text_printf(int col, int row, uint16_t color, const char *fmt, ...)

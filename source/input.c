@@ -107,9 +107,10 @@ static const AutoplayStep script[] = {
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub (single player)
     {  60, 0 },
-    {   3, KEY_A },             // hub -> region intro
-    {  20, 0 },
-    {   3, KEY_A },             // intro -> play
+    { 100, KEY_UP },            // walk north out of the plaza to the gate
+    {   3, KEY_A },             // gate -> world map
+    {  30, 0 },
+    {   3, KEY_A },             // world map -> play
     {  90, KEY_UP },            // walk into the arena
     { 120, KEY_LEFT },          // keep moving; cards fire on their own
     { 120, KEY_RIGHT },
@@ -131,9 +132,10 @@ static const AutoplayStep script[] = {
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub (single player)
     {  60, 0 },
-    {   3, KEY_A },             // hub -> region intro
-    {  20, 0 },
-    {   3, KEY_A },             // intro -> play
+    { 100, KEY_UP },            // walk north out of the plaza to the gate
+    {   3, KEY_A },             // gate -> world map
+    {  30, 0 },
+    {   3, KEY_A },             // world map -> play
     {  90, KEY_UP },            // walk into the arena
     { 120, KEY_LEFT },          // keep moving; cards fire on their own
     { 120, KEY_RIGHT },
@@ -151,10 +153,6 @@ static const AutoplayStep script[] = {
 };
 #endif   // AUTOPLAY_TAP_CARD
 #elif defined(AUTOPLAY_BOSS)
-// Route used to verify the boss fight: play normally for long enough that the
-// region's ingredient drops accumulate past the summon threshold, dismissing
-// the card picker whenever it opens. The boss appears on its own; nothing here
-// pokes the debug shortcut, so this exercises the real progression path.
 static const AutoplayStep script[] = {
     {  60, 0 },
     {   3, KEY_A },             // title menu -> character select
@@ -163,42 +161,85 @@ static const AutoplayStep script[] = {
     {  20, 0 },
     {   3, KEY_A },             // mode select -> hub
     {  40, 0 },
-    {   3, KEY_A },             // hub -> region intro
+    // The hub's walking route depends on the kingdom layout, which changes
+    // whenever the map is reworked; L drops straight into the region from the
+    // hub, so this script only has to know which state it is in, not which way
+    // the gate happens to be from wherever the capybara spawned. (SELECT is
+    // taken by the ending route's "fill every ingredient" shortcut.)
+    {   3, KEY_L },             // debug: hub -> region 1
+    {  40, 0 },
+    {   3, KEY_A },             // dismiss a picker if one is up
+    {   3, KEY_R },             // debug: spawn an elite beside us
+    {  50, 0 },
+    {   3, KEY_A },             // dismiss a picker if one is up
+    {   3, KEY_L },             // debug: force the raid wave now
+    { 120, 0 },                 // fight the wave for a moment
+    {   3, KEY_A },             // dismiss a picker if one is up
     {  20, 0 },
-    {   3, KEY_A },             // intro -> play
+    // Repeat the fill: a press that lands while the card picker is paused is
+    // swallowed by the picker, so keep pressing until one lands in play.
+    {   3, KEY_SELECT },        // debug: fill the bar -> the boss leaps out
+    {  30, 0 },
+    {   3, KEY_A },
     {  20, 0 },
-    {   3, KEY_SELECT },        // debug: summon the boss right away
-    {  60, 0 },
-    { 100, KEY_UP },
-    // Walk a long circuit, pausing to fight. A is pressed periodically so any
-    // card picker that opens gets dismissed and the run keeps going.
-    { 260, KEY_LEFT },
+    {   3, KEY_SELECT },
+    {  30, 0 },
     {   3, KEY_A },
-    { 260, KEY_RIGHT },
-    {   3, KEY_A },
-    { 260, KEY_DOWN },
+    {  20, 0 },
+    {   3, KEY_SELECT },
+    {  60, 0 },                 // the leap-out beat plays here
+    // The duel runs from here on: sweep side to side and hop. A is jump in
+    // the arena; the periodic presses double as "dismiss any picker" and
+    // "hop".
+    { 300, KEY_UP },
     {   3, KEY_A },
     { 300, KEY_LEFT },
     {   3, KEY_A },
-    { 300, KEY_UP },
+    { 300, KEY_DOWN },
     {   3, KEY_A },
     { 300, KEY_RIGHT },
     {   3, KEY_A },
-    { 300, KEY_DOWN },
+    { 400, KEY_UP },
     {   3, KEY_A },
     { 400, KEY_LEFT },
     {   3, KEY_A },
+    { 400, KEY_DOWN },
+    {   3, KEY_A },
     { 400, KEY_RIGHT },
     {   3, KEY_A },
-    { 400, KEY_UP },
+    { 500, KEY_UP },
+    {   3, KEY_A },
+    { 500, KEY_LEFT },
     {   3, KEY_A },
     { 500, KEY_DOWN },
     {   3, KEY_A },
-    { 600, KEY_LEFT },
+    { 500, KEY_RIGHT },
     {   3, KEY_A },
-    { 600, KEY_RIGHT },
-    { 900, 0 },                 // hold so the boss fight can be captured
+    { 500, KEY_UP },
+    {   3, KEY_A },
+    { 500, KEY_LEFT },
+    {   3, KEY_A },
+    { 500, KEY_DOWN },
+    {   3, KEY_A },
+    { 500, KEY_RIGHT },
+    {   3, KEY_A },
+    // The duel: sweep side to side and hop. A is jump in the arena; the
+    // periodic presses double as "dismiss any picker" and "hop".
+    { 120, KEY_LEFT },
+    {   3, KEY_A },
+    { 120, KEY_RIGHT },
+    {   3, KEY_A },
+    { 120, KEY_LEFT },
+    {   3, KEY_A },
+    { 120, KEY_RIGHT },
+    {   3, KEY_A },
+    { 120, KEY_LEFT },
+    {   3, KEY_A },
+    { 120, KEY_RIGHT },
+    {   3, KEY_A },
+    { 600, 0 },                 // hold so the duel can be captured
 };
+
 #elif defined(AUTOPLAY_ENDING)
 // Alternate route used to verify the finale: go straight to the hub, secure
 // every ingredient through the debug shortcut, and bake the cake. Playing all
@@ -216,9 +257,140 @@ static const AutoplayStep script[] = {
     {   3, KEY_Y },             // bake the cake -> ending
     { 900, 0 },                 // let the whole finale play
 };
+#elif defined(AUTOPLAY_UI)
+// Route used to review the menu screens a battle route never visits: settings,
+// the skill tree, and the wireless lobby (reached through a scripted tap on the
+// hub's shortcut bar). Each screen holds long enough that a screenshot loop can
+// catch it cleanly.
+static const AutoplayStep script[] = {
+    {  60, 0 },
+    {   3, KEY_DOWN },          // title: move to 设置
+    {  20, 0 },
+    {   3, KEY_A },             // -> settings
+    { 150, 0 },                 // hold for the screenshot
+    {   3, KEY_DOWN },          // select 返回
+    {  10, 0 },
+    {   3, KEY_A },             // back to the title
+    {  30, 0 },
+    {   3, KEY_A },             // title -> character select
+    {  60, 0 },
+    {   3, KEY_RIGHT },         // select the second capybara, so both get seen
+    {  10, 0 },
+    {   3, KEY_A },             // character select -> mode select
+    {  60, 0 },
+    {   3, KEY_A },             // mode select -> hub (single player)
+    {  90, 0 },
+    {   3, KEY_X },             // hub -> skill tree
+    { 150, 0 },                 // hold for the screenshot
+    {   3, KEY_B },             // back to the hub
+    {  90, 0 },
+    {   3, 0 },                 // the scripted tap lands at frame 790
+    {  40, 0 },                 // -> lobby menu
+    { 150, 0 },                 // hold for the screenshot
+    {   3, KEY_B },             // back to the hub
+    {  60, 0 },
+    {  90, KEY_UP },            // walk north out of the plaza to the gate
+    {   3, KEY_A },             // gate -> world map
+    { 150, 0 },                 // hold for the screenshot
+    {   3, KEY_A },             // world map -> play
+    { 300, 0 },                 // hold: the play HUD, for the capture loop
+    {   3, KEY_A },             // commit a card picker if one opened, so the
+    {  20, 0 },                 // presentation keys below are not eaten by it
+    {   3, KEY_START },         // -> level-clear plate
+    { 150, 0 },                 // hold for the screenshot
+    {   3, KEY_A },             // back to the hub
+    {  60, 0 },
+    {   3, KEY_A },             // commit a picker again, if one opened
+    {  20, 0 },
+    {   3, KEY_L },             // -> game-over plate
+    { 150, 0 },                 // hold for the screenshot
+    {   3, KEY_A },             // back to the hub
+    {  60, 0 },
+    {   3, KEY_A },             // and again before the R press
+    {  20, 0 },
+    {   3, KEY_R },             // -> the ending
+    { 420, 0 },                 // the ending plays out
+    {   3, KEY_A },             // -> credits
+    { 300, 0 },                 // hold for the screenshot
+    {   3, KEY_B },             // back to the title
+    { 300, 0 },
+};
+#elif defined(AUTOPLAY_FARM)
+// Route for the field. The hub route above never walks to the farm, so the one
+// screen this build adds would otherwise have no automated coverage at all --
+// and the field is exactly the kind of thing that silently breaks, because it
+// is drawn at runtime instead of being baked into the map.
+//
+// It walks west out of the plaza to the plots, then plants, waters, sleeps a
+// night at the spring and comes back to look at what grew. Every step is
+// separated by a dwell so a screenshot loop running at 0.4s can catch each
+// state rather than only the last one.
+static const AutoplayStep script[] = {
+    { 120, 0 },                 // let the title settle (and be captured)
+    {   3, KEY_A },             // title -> character select
+    {  30, 0 },
+    {   3, KEY_A },             // character select -> mode select
+    {  30, 0 },
+    {   3, KEY_A },             // mode select -> hub
+    { 180, 0 },                 // dwell: the park with an empty field
+    {   3, KEY_SELECT },        // debug: fill the seed satchel
+    { 150, 0 },                 // dwell: the satchel panel, full
+
+    // --- walk to the field ------------------------------------------------
+    // The hero spawns at the plaza's centre (world 384,344 = tile 24,21).
+    // Walking straight west from there runs into the house at tile (17,21) --
+    // verified by walking the generated hub map -- so the route steps DOWN
+    // first, into a lane that is clear all the way to the bed.
+    //
+    //   DOWN 12 frames = 3 tiles  -> centre (384,392), tile row 24
+    //   LEFT 40 frames = 10 tiles -> centre (224,392), tile col 14
+    //
+    // That lands the centre inside the field rectangle (144,336)-(240,400) and
+    // well inside its 26 px interaction reach. The numbers were derived from
+    // the generated map rather than guessed, and the four-frame nudges below
+    // (one tile each) keep every subsequent press on the bed: 8-frame nudges
+    // would step off its left edge by the fourth press.
+    {  12, KEY_DOWN },
+    {  40, KEY_LEFT },
+    { 180, 0 },                 // dwell: standing at the field, panel swapped
+
+    // --- plant four plots -------------------------------------------------
+    // A is the context action, and it works on the plot the hero is standing
+    // on. Nudging one tile between presses is what moves the action along the
+    // bed, so the four presses plant four different plots.
+    {   3, KEY_A },             // plant
+    {  30, 0 },
+    {   4, KEY_LEFT },
+    {   3, KEY_A },
+    {  30, 0 },
+    {   4, KEY_LEFT },
+    {   3, KEY_A },
+    {  30, 0 },
+    {   4, KEY_LEFT },
+    {   3, KEY_A },
+    { 180, 0 },                 // dwell: sprouts on the bed
+
+    // --- water the whole bed, then sleep ----------------------------------
+    {   3, KEY_B },             // water every planted plot at once
+    { 180, 0 },                 // dwell: wet soil (a darker, sheened tile)
+    // The spring anchor is tile (34,29), i.e. east 20 tiles and south 5 from
+    // the bed. The walk is padded so it still lands inside the landmark's own
+    // 48 px reach if the hub layout moves.
+    { 100, KEY_RIGHT },
+    {  40, KEY_DOWN },
+    { 120, 0 },
+    {   3, KEY_A },             // the spring: the night passes, crops grow
+    { 240, 0 },                 // dwell: the day counter and the toast
+
+    // --- back to the field, to see what the night did ---------------------
+    { 100, KEY_LEFT },
+    {  40, KEY_UP },
+    { 240, 0 },                 // dwell: the crops a stage further on
+};
+
 #else
 static const AutoplayStep script[] = {
-    {  90, 0 },                 // let the title settle
+    { 240, 0 },                 // let the title settle (and be captured)
     {   3, KEY_A },             // title menu -> character select
     {  20, 0 },
     {   3, KEY_A },             // character select -> mode select
@@ -228,9 +400,14 @@ static const AutoplayStep script[] = {
     // and its own camera), and a dwell of a second is too short to catch it
     // with an external screenshot loop.
     { 150, 0 },
-    {   3, KEY_A },             // hub -> region intro
-    {  30, 0 },
-    {   3, KEY_A },             // intro -> play
+    { 100, KEY_UP },            // walk north out of the plaza to the gate
+    {   3, KEY_A },             // gate -> world map
+    {   3, KEY_RIGHT },         // move the cursor off the first node, so a
+    {  20, 0 },                 // screenshot shows the chart marks the selection
+    { 240, 0 },                 // dwell: the map is a screen worth capturing
+    {   3, KEY_LEFT },          // back onto the first node before starting it
+    {  20, 0 },
+    {   3, KEY_A },             // world map -> play
     { 110, KEY_UP },            // walk up into the arena
     { 120, KEY_LEFT },
     { 120, KEY_RIGHT },
@@ -274,6 +451,15 @@ static int      g_script_frame = 0;
 #define TAP_Y        60
 #endif
 
+// A one-shot tap for routes that need to press a specific touch button once at
+// a known frame -- the hub's shortcut bar is reachable no other way from a
+// script, because it has no D-pad binding.
+#if defined(AUTOPLAY_UI)
+#define TAP_ONCE_FRAME 790     // the hub, after the skill-tree visit
+#define TAP_ONCE_X      96     // the second shortcut: 无线联机
+#define TAP_ONCE_Y     169
+#endif
+
 void input_poll(void)
 {
     if (g_left < 0)
@@ -283,7 +469,7 @@ void input_poll(void)
     g_down = (uint16_t)(keys & ~g_held);   // edge detection for "just pressed"
     g_held = keys;
 
-#ifdef AUTOPLAY_TAP_CARD
+#if defined(AUTOPLAY_TAP_CARD)
     int phase = g_script_frame % TAP_PERIOD;
     bool down = (phase < TAP_DOWN);
     g_touch_pressed = down && !g_touch_down;
@@ -292,6 +478,25 @@ void input_poll(void)
     {
         g_touch_x = TAP_X;
         g_touch_y = TAP_Y;
+    }
+#endif   // AUTOPLAY_TAP_CARD
+
+#ifdef AUTOPLAY_UI
+    // One tap, one frame long, at a scripted frame and position. The edge
+    // detection above means the game sees a press only on the frame the finger
+    // goes down, which is what a real panel produces.
+    if (g_script_frame == TAP_ONCE_FRAME ||
+        g_script_frame == TAP_ONCE_FRAME + 1)
+    {
+        g_touch_pressed = (g_script_frame == TAP_ONCE_FRAME);
+        g_touch_down = true;
+        g_touch_x = TAP_ONCE_X;
+        g_touch_y = TAP_ONCE_Y;
+    }
+    else
+    {
+        g_touch_pressed = false;
+        g_touch_down = false;
     }
 #endif
     g_script_frame++;
@@ -314,5 +519,12 @@ void input_poll(void)
 
 uint16_t input_held(void) { return g_held; }
 uint16_t input_down(void) { return g_down; }
+
+// Diagnostics for the screen-capture loop: which script step is live and how
+// far into it we are. Drawn by the UI route so a stalled run shows WHERE it
+// stalled instead of presenting a frozen menu with no story.
+int autoplay_debug_step(void) { return g_step; }
+int autoplay_debug_left(void) { return g_left; }
+int autoplay_debug_frame(void) { return g_script_frame; }
 
 #endif  // AUTOPLAY

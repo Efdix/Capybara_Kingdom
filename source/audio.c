@@ -54,6 +54,31 @@ static const ModuleMap g_modules[MUS_COUNT] = {
 #else
     { 0, 0 },
 #endif
+#ifdef MOD_BATTLE_RAIN
+    { 1, MOD_BATTLE_RAIN },
+#else
+    { 0, 0 },
+#endif
+#ifdef MOD_BATTLE_FARM
+    { 1, MOD_BATTLE_FARM },
+#else
+    { 0, 0 },
+#endif
+#ifdef MOD_BATTLE_PAST
+    { 1, MOD_BATTLE_PAST },
+#else
+    { 0, 0 },
+#endif
+#ifdef MOD_BATTLE_MARSH
+    { 1, MOD_BATTLE_MARSH },
+#else
+    { 0, 0 },
+#endif
+#ifdef MOD_BATTLE_VOLCANO
+    { 1, MOD_BATTLE_VOLCANO },
+#else
+    { 0, 0 },
+#endif
 };
 
 // Sound effect ids (SND_* game-side indices) map onto bank samples the

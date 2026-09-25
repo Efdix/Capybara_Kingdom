@@ -36,7 +36,7 @@ static uint8_t  g_sub_bmp[BMP_STRIDE * VIS_ROWS] __attribute__((aligned(4)));
 
 // --- the current region's world --------------------------------------------
 static const uint8_t *g_atlas = NULL;   // ATLAS_TILES x 256 B of 16x16 tiles
-static const uint8_t *g_map   = NULL;   // WORLD_COLS*WORLD_ROWS tile ids
+static const uint8_t *g_map   = NULL;   // g_world_cols*g_world_rows tile ids
 static const uint8_t *g_prop  = NULL;   // ATLAS_TILES flags, nonzero = solid
 
 // --- camera ----------------------------------------------------------------
@@ -103,8 +103,8 @@ void render_camera(int x, int y)
 
     // Clamp so the viewport never leaves the world: the border of the map is a
     // solid wall, and showing past it would break the illusion of a big place.
-    int max_x = WORLD_W - AREA_W;
-    int max_y = WORLD_H - AREA_H;
+    int max_x = G_WORLD_W - AREA_W;
+    int max_y = G_WORLD_H - AREA_H;
     if (max_x < 0) max_x = 0;
     if (max_y < 0) max_y = 0;
     if (x < 0) x = 0;
@@ -146,9 +146,10 @@ static inline uint8_t ground_px(int sx, int sy)
         return 0;
     int wx = sx + g_cam_x;
     int wy = sy + g_cam_y;
-    if ((unsigned)wx >= WORLD_W || (unsigned)wy >= WORLD_H)
+    if ((unsigned)wx >= (unsigned)G_WORLD_W ||
+        (unsigned)wy >= (unsigned)G_WORLD_H)
         return 0;
-    unsigned id = g_map[(wy >> 4) * WORLD_COLS + (wx >> 4)];
+    unsigned id = g_map[(wy >> 4) * g_world_cols + (wx >> 4)];
     if (id >= ATLAS_TILES)
         return 0;
     return g_atlas[(id << 8) + ((wy & 15) << 4) + (wx & 15)];
@@ -183,8 +184,9 @@ void render_world(void)
             int sx = tx * 16 - ox;
 
             unsigned id = 0;
-            if ((unsigned)mtx < WORLD_COLS && (unsigned)mty < WORLD_ROWS)
-                id = g_map[mty * WORLD_COLS + mtx];
+            if ((unsigned)mtx < (unsigned)g_world_cols &&
+                (unsigned)mty < (unsigned)g_world_rows)
+                id = g_map[mty * g_world_cols + mtx];
             if (id >= ATLAS_TILES)
                 id = 0;
             const uint8_t *src = g_atlas + (id << 8);
@@ -363,6 +365,53 @@ void gfx_line(int x0, int y0, int x1, int y1, uint8_t color)
     }
 }
 
+// Blit a whole-screen 8bpp UI image (the title scene, the expedition chart)
+// into the main buffer. Screen space, camera ignored, no transparency: these
+// are backgrounds that cover the entire 256x192 play area.
+void render_ui_image(const uint8_t *img)
+{
+    if (!img)
+        return;
+    for (int y = 0; y < AREA_H; y++)
+        memcpy(g_main_bmp + y * BMP_STRIDE, img + y * AREA_W, AREA_W);
+}
+
+bool gfx_onscreen(int32_t wx, int32_t wy, int w, int h)
+{
+    int sx = (int)wx - g_cam_x;
+    int sy = (int)wy - g_cam_y;
+    return sx + w > 0 && sy + h > 0 && sx < AREA_W && sy < AREA_H;
+}
+
+// ---------------------------------------------------------------------------
+// Hit flash
+//
+// At 8bpp every sprite shares one palette, so there is no per-sprite palette to
+// swap and no alpha to blend with: the only way to make one creature flash is to
+// change what its own pixels are drawn as. That is what this does -- while a
+// flash is open, every opaque pixel of the next blit is replaced with the flash
+// colour, turning the sprite into a bright silhouette for as long as the caller
+// keeps it open.
+//
+// A silhouette rather than a tint is deliberate. Blending toward white would
+// need a per-material ramp to know what "brighter" means for each of the two
+// hundred colours in the palette, and at two or three frames the eye reads the
+// outline, not the interior. The flag is open for the duration of a single blit
+// call, so it cannot leak into an unrelated draw.
+// ---------------------------------------------------------------------------
+
+static uint8_t s_flash_colour = 0;
+
+void gfx_flash_begin(uint8_t colour)
+{
+    s_flash_colour = colour;
+}
+
+void gfx_flash_end(void)
+{
+    s_flash_colour = 0;
+}
+
 void gfx_blit_8bpp(const uint8_t *tiles, int tw, int th, int frame,
                    int x, int y, bool hflip, bool shadow)
 {
@@ -426,7 +475,7 @@ void gfx_blit_8bpp(const uint8_t *tiles, int tw, int th, int frame,
             int sxi = hflip ? (tw - 1 - i) : i;
             uint8_t c = row[sxi];
             if (c != 0)
-                dst[i] = c;
+                dst[i] = s_flash_colour ? s_flash_colour : c;
         }
     }
 }
@@ -442,13 +491,24 @@ void gfx_blit_8bpp(const uint8_t *tiles, int tw, int th, int frame,
 void gfx_blit_8bpp_scaled(const uint8_t *tiles, int tw, int th, int frame,
                           int x, int y, bool hflip, bool shadow, int pct)
 {
-    if (pct <= 0)
+    gfx_blit_8bpp_scaled_xy(tiles, tw, th, frame, x, y, hflip, shadow,
+                            pct, pct);
+}
+
+// The two-axis form is what lets a sprite do squash-and-stretch pose work: a
+// boss that crouches before a slam reads as effort, where a uniform scale only
+// reads as distance.
+void gfx_blit_8bpp_scaled_xy(const uint8_t *tiles, int tw, int th, int frame,
+                             int x, int y, bool hflip, bool shadow,
+                             int pct_x, int pct_y)
+{
+    if (pct_x <= 0 || pct_y <= 0)
         return;
 
     const uint8_t *src = tiles + (size_t)frame * tw * th;
 
-    int dw = (tw * pct) / 100;
-    int dh = (th * pct) / 100;
+    int dw = (tw * pct_x) / 100;
+    int dh = (th * pct_y) / 100;
     if (dw <= 0 || dh <= 0)
         return;
 
@@ -505,7 +565,7 @@ void gfx_blit_8bpp_scaled(const uint8_t *tiles, int tw, int th, int frame,
             int sxi = hflip ? (tw - 1 - si) : si;
             uint8_t c = row[sxi];
             if (c != 0)
-                dst[i] = c;
+                dst[i] = s_flash_colour ? s_flash_colour : c;
         }
     }
 }
@@ -595,11 +655,11 @@ void sub_blit_card(int card_id, int x, int y, int w, int h)
 
 bool collision_at(int px, int py)
 {
-    if (px < 0 || py < 0 || px >= WORLD_W || py >= WORLD_H)
+    if (px < 0 || py < 0 || px >= G_WORLD_W || py >= G_WORLD_H)
         return true;
     if (!g_map || !g_prop)
         return false;
-    unsigned id = g_map[(py >> 4) * WORLD_COLS + (px >> 4)];
+    unsigned id = g_map[(py >> 4) * g_world_cols + (px >> 4)];
     if (id >= ATLAS_TILES)
         return true;
     return g_prop[id] != 0;

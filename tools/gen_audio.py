@@ -1000,12 +1000,239 @@ def song_birthday():
     ], patterns=pats, orders=[0, 1])
 
 
+# --------------------------------------------------------------------------
+# one battle theme per region
+#
+# Five regions sharing one battle track was the one gap in an otherwise fully
+# themed region package (atlas, weather, roster, boss all differ). These are
+# not transpositions of one tune: each region gets its own key, its own
+# tempo and its own melodic figures, written over the same chassis as
+# song_battle (three 4-bar patterns, galloping bass, kick/snare/hats) so the
+# bank stays small and the family resemblance is deliberate -- five dialects
+# of the same language, not five languages.
+# --------------------------------------------------------------------------
+
+def region_battle(name, speed, roots, mel_a, mel_b, mel_c):
+    """Build a battle theme from 4 bass roots and three melody lines.
+
+    `roots` are the per-bar bass roots (octave 2); the gallop octave-jumps
+    them to 3, exactly as song_battle does. Each melody list is 32
+    (row, note) pairs over the 64-row pattern -- eighth notes, chord tones
+    on the strong rows.
+    """
+    pats = [Pattern() for _ in range(3)]
+    for pat, mel in ((pats[0], mel_a), (pats[1], mel_b), (pats[2], mel_c)):
+        pat.notes(0, LEAD, mel)
+        for bar in range(4):
+            base = bar * BAR
+            root = roots[bar]
+            for k, off in enumerate((0, 2, 4, 6, 8, 10, 12, 14)):
+                pat.put(1, base + off, BASS,
+                        note=root if k % 4 != 2 else root[:-1] + "3")
+        kick_snare(pat)
+        hats(pat, 2)
+
+    return dict(name=name, speed=speed, samples=[
+        (LEAD, "capy lead", make_lead(), 58, True),
+        (BASS, "capy bass", make_bass(), 64, True),
+        (KICK, "kick", make_kick, 60, False),
+        (SNARE, "snare", make_snare, 44, False),
+        (HAT, "hat", make_hat, 26, False),
+    ], patterns=pats, orders=[0, 1, 0, 2])
+
+
+def song_battle_rain():
+    """雨林. D dorian, speed 4. Rolling and green: wide arpeggios that keep
+    circling back to D, with the dorian 6th (B natural) colouring bar 4."""
+    return region_battle(
+        "battle_rain", 4,
+        ["D2", "F2", "C2", "G2"],
+        # A: rolling chord arpeggios, one chord per bar
+        [(0, "D5"), (2, "F5"), (4, "A4"), (6, "D5"), (8, "F5"), (10, "A5"),
+         (12, "F5"), (14, "D5"),
+         (16, "A4"), (18, "C5"), (20, "F5"), (22, "A5"), (24, "F5"),
+         (26, "C5"), (28, "A4"), (30, "F4"),
+         (32, "E5"), (34, "G5"), (36, "C5"), (38, "E5"), (40, "G4"),
+         (42, "C5"), (44, "E5"), (46, "G5"),
+         (48, "B4"), (50, "D5"), (52, "G5"), (54, "D5"), (56, "B4"),
+         (58, "G4"), (60, "A4"), (62, "B4")],
+        # B: insistent repeated-note lift
+        [(0, "D5"), (2, "D5"), (4, "A4"), (6, "A4"), (8, "D5"), (10, "D5"),
+         (12, "F5"), (14, "F5"),
+         (16, "C5"), (18, "C5"), (20, "A4"), (22, "A4"), (24, "F5"),
+         (26, "F5"), (28, "C5"), (30, "C5"),
+         (32, "E5"), (34, "E5"), (36, "G4"), (38, "G4"), (40, "E5"),
+         (42, "E5"), (44, "C5"), (46, "C5"),
+         (48, "D5"), (50, "D5"), (52, "B4"), (54, "G4"), (56, "A4"),
+         (58, "B4"), (60, "C5"), (62, "D5")],
+        # C: descending answering phrase
+        [(0, "F5"), (2, "E5"), (4, "D5"), (6, "C5"), (8, "D5"), (10, "A4"),
+         (12, "B4"), (14, "C5"),
+         (16, "A4"), (18, "C5"), (20, "F5"), (22, "C5"), (24, "A4"),
+         (26, "F4"), (28, "G4"), (30, "A4"),
+         (32, "G4"), (34, "C5"), (36, "E5"), (38, "G5"), (40, "E5"),
+         (42, "C5"), (44, "G4"), (46, "C5"),
+         (48, "D5"), (50, "B4"), (52, "G4"), (54, "B4"), (56, "D5"),
+         (58, "G5"), (60, "F5"), (62, "D5")],
+    )
+
+
+def song_battle_farm():
+    """农场. G major, speed 5. A harvest reel: bouncing major-key gallop,
+    melodies that hop like sparrows after thresher grain."""
+    return region_battle(
+        "battle_farm", 5,
+        ["G2", "E2", "C2", "D2"],
+        # A: G | Em | C | D, hopping chord tones
+        [(0, "G4"), (2, "B4"), (4, "D5"), (6, "G5"), (8, "D5"), (10, "B4"),
+         (12, "D5"), (14, "G4"),
+         (16, "E5"), (18, "B4"), (20, "G4"), (22, "E4"), (24, "G4"),
+         (26, "B4"), (28, "E5"), (30, "B4"),
+         (32, "C5"), (34, "E5"), (36, "G5"), (38, "E5"), (40, "C5"),
+         (42, "G4"), (44, "E5"), (46, "C5"),
+         (48, "D5"), (50, "F#5"), (52, "A5"), (54, "F#5"), (56, "D5"),
+         (58, "A4"), (60, "F#4"), (62, "A4")],
+        # B: the reel turns over -- repeated pairs, rising answer
+        [(0, "G5"), (2, "G5"), (4, "D5"), (6, "D5"), (8, "B4"), (10, "B4"),
+         (12, "G5"), (14, "G5"),
+         (16, "E5"), (18, "E5"), (20, "B4"), (22, "B4"), (24, "G4"),
+         (26, "G4"), (28, "E5"), (30, "E5"),
+         (32, "C5"), (34, "C5"), (36, "G4"), (38, "G4"), (40, "E5"),
+         (42, "E5"), (44, "C5"), (46, "C5"),
+         (48, "D5"), (50, "D5"), (52, "F#4"), (54, "A4"), (56, "D5"),
+         (58, "F#5"), (60, "A5"), (62, "F#5")],
+        # C: the reel's big descending swing
+        [(0, "D5"), (2, "C5"), (4, "B4"), (6, "A4"), (8, "G4"), (10, "B4"),
+         (12, "D5"), (14, "G5"),
+         (16, "E5"), (18, "D5"), (20, "B4"), (22, "G4"), (24, "E4"),
+         (26, "G4"), (28, "B4"), (30, "E5"),
+         (32, "G5"), (34, "E5"), (36, "C5"), (38, "G4"), (40, "C5"),
+         (42, "E5"), (44, "G5"), (46, "C6"),
+         (48, "D5"), (50, "F#5"), (52, "A5"), (54, "D6"), (56, "A5"),
+         (58, "F#5"), (60, "D5"), (62, "D5")],
+    )
+
+
+def song_battle_past():
+    """牧场. C major, speed 5. Open plains: wide leaps, a tune that lopes
+    like something running because it can, not because it must."""
+    return region_battle(
+        "battle_past", 5,
+        ["C2", "A2", "F2", "G2"],
+        # A: C | Am | F | G, leaping thirds and sixths
+        [(0, "C5"), (2, "E5"), (4, "G4"), (6, "C5"), (8, "E5"), (10, "G5"),
+         (12, "E5"), (14, "C5"),
+         (16, "A4"), (18, "C5"), (20, "E5"), (22, "A5"), (24, "E5"),
+         (26, "C5"), (28, "A4"), (30, "E4"),
+         (32, "F4"), (34, "A4"), (36, "C5"), (38, "F5"), (40, "C5"),
+         (42, "A4"), (44, "F4"), (46, "C5"),
+         (48, "D5"), (50, "G4"), (52, "B4"), (54, "D5"), (56, "G5"),
+         (58, "D5"), (60, "B4"), (62, "G4")],
+        # B: galloping repeated figures across the plain
+        [(0, "E5"), (2, "E5"), (4, "C5"), (6, "C5"), (8, "G4"), (10, "G4"),
+         (12, "E5"), (14, "E5"),
+         (16, "C5"), (18, "C5"), (20, "A4"), (22, "A4"), (24, "E5"),
+         (26, "E5"), (28, "C5"), (30, "C5"),
+         (32, "A4"), (34, "A4"), (36, "F4"), (38, "F4"), (40, "C5"),
+         (42, "C5"), (44, "A4"), (46, "A4"),
+         (48, "B4"), (50, "B4"), (52, "G4"), (54, "G4"), (56, "D5"),
+         (58, "D5"), (60, "B4"), (62, "D5")],
+        # C: the wide answering phrase, top register
+        [(0, "G5"), (2, "E5"), (4, "C5"), (6, "G4"), (8, "C5"), (10, "E5"),
+         (12, "G5"), (14, "E5"),
+         (16, "A5"), (18, "E5"), (20, "C5"), (22, "A4"), (24, "C5"),
+         (26, "E5"), (28, "A5"), (30, "E5"),
+         (32, "F5"), (34, "C5"), (36, "A4"), (38, "F4"), (40, "A4"),
+         (42, "C5"), (44, "F5"), (46, "C5"),
+         (48, "G5"), (50, "D5"), (52, "B4"), (54, "G4"), (56, "B4"),
+         (58, "D5"), (60, "G5"), (62, "B5")],
+    )
+
+
+def song_battle_marsh():
+    """沼泽. E minor, speed 4. Lurking: a creeping half-step figure over a
+    slow-for-its-tempo harmonic rhythm, with the harmonic-minor lift into B."""
+    return region_battle(
+        "battle_marsh", 4,
+        ["E2", "C2", "A2", "B2"],
+        # A: Em | C | Am | B -- the creep, then the dominant
+        [(0, "E5"), (2, "D#5"), (4, "E5"), (6, "G4"), (8, "B4"), (10, "E5"),
+         (12, "D5"), (14, "B4"),
+         (16, "C5"), (18, "B4"), (20, "C5"), (22, "E4"), (24, "G4"),
+         (26, "C5"), (28, "B4"), (30, "G4"),
+         (32, "A4"), (34, "G#4"), (36, "A4"), (38, "C4"), (40, "E4"),
+         (42, "A4"), (44, "G4"), (46, "E4"),
+         (48, "F#4"), (50, "B4"), (52, "D#5"), (54, "F#5"), (56, "B4"),
+         (58, "D#5"), (60, "F#5"), (62, "A5")],
+        # B: held tension, repeated notes over the turn
+        [(0, "B4"), (2, "B4"), (4, "E5"), (6, "D#5"), (8, "E5"), (10, "G5"),
+         (12, "E5"), (14, "B4"),
+         (16, "G4"), (18, "G4"), (20, "C5"), (22, "B4"), (24, "C5"),
+         (26, "E5"), (28, "C5"), (30, "G4"),
+         (32, "E4"), (34, "E4"), (36, "A4"), (38, "G#4"), (40, "A4"),
+         (42, "C5"), (44, "A4"), (46, "E4"),
+         (48, "F#4"), (50, "F#4"), (52, "B4"), (54, "A#4"), (56, "B4"),
+         (58, "D#5"), (60, "F#5"), (62, "B5")],
+        # C: the answer crawls back down
+        [(0, "G5"), (2, "F#5"), (4, "E5"), (6, "D#5"), (8, "E5"), (10, "B4"),
+         (12, "G4"), (14, "B4"),
+         (16, "E5"), (18, "D5"), (20, "C5"), (22, "B4"), (24, "C5"),
+         (26, "G4"), (28, "E4"), (30, "G4"),
+         (32, "C5"), (34, "B4"), (36, "A4"), (38, "G#4"), (40, "A4"),
+         (42, "E4"), (44, "C4"), (46, "E4"),
+         (48, "D#5"), (50, "F#5"), (52, "B4"), (54, "F#4"), (56, "B4"),
+         (58, "F#5"), (60, "D#5"), (62, "B4")],
+    )
+
+
+def song_battle_volcano():
+    """可可火山. F minor, speed 3. The fastest thing in the bank: Fm | Db |
+    Eb | Fm with the harmonic-minor E natural over the dominant, relentless
+    driving eighths -- the final region's soundtrack should sound like the
+    ground under it."""
+    return region_battle(
+        "battle_volcano", 3,
+        ["F2", "C#2", "D#2", "F2"],
+        # A: driving arpeggios
+        [(0, "F5"), (2, "C5"), (4, "G#4"), (6, "F4"), (8, "G#4"),
+         (10, "C5"), (12, "F5"), (14, "C5"),
+         (16, "G#5"), (18, "F5"), (20, "C#5"), (22, "G#4"), (24, "C#5"),
+         (26, "F5"), (28, "G#5"), (30, "F5"),
+         (32, "D#5"), (34, "G4"), (36, "D#5"), (38, "G5"), (40, "D#5"),
+         (42, "G4"), (44, "A#4"), (46, "D#5"),
+         (48, "F5"), (50, "C5"), (52, "G#4"), (54, "F4"), (56, "F5"),
+         (58, "C6"), (60, "G#5"), (62, "F5")],
+        # B: the eruption -- repeated peaks, harmonic-minor E natural
+        [(0, "F5"), (2, "F5"), (4, "C6"), (6, "C6"), (8, "G#5"), (10, "G#5"),
+         (12, "F5"), (14, "F5"),
+         (16, "C#5"), (18, "C#5"), (20, "G#5"), (22, "G#5"), (24, "F5"),
+         (26, "F5"), (28, "C#5"), (30, "C#5"),
+         (32, "D#5"), (34, "D#5"), (36, "G5"), (38, "G5"), (40, "D#5"),
+         (42, "D#5"), (44, "A#4"), (46, "A#4"),
+         (48, "E5"), (50, "E5"), (52, "G5"), (54, "C5"), (56, "B4"),
+         (58, "C5"), (60, "F5"), (62, "C5")],
+        # C: falling ash -- descending pairs back to the root
+        [(0, "G#5"), (2, "G#5"), (4, "F5"), (6, "F5"), (8, "C5"),
+         (10, "C5"), (12, "G#4"), (14, "G#4"),
+         (16, "F5"), (18, "F5"), (20, "C#5"), (22, "C#5"), (24, "G#4"),
+         (26, "G#4"), (28, "C#5"), (30, "F5"),
+         (32, "G5"), (34, "G5"), (36, "D#5"), (38, "D#5"), (40, "A#4"),
+         (42, "A#4"), (44, "D#5"), (46, "G5"),
+         (48, "F5"), (50, "C5"), (52, "G#4"), (54, "F4"), (56, "G#4"),
+         (58, "C5"), (60, "F5"), (62, "C6")],
+    )
+
+
 SONG_BUILDERS = [song_title, song_field, song_battle,
-                 song_boss, song_victory, song_birthday]
+                 song_boss, song_victory, song_birthday,
+                 song_battle_rain, song_battle_farm, song_battle_past,
+                 song_battle_marsh, song_battle_volcano]
 
 # songs that must loop forever: the last row of the last pattern jumps home.
 # (victory is a one-shot jingle, so it is excluded.)
-LOOPING_SONGS = {"title", "field", "battle", "boss", "birthday"}
+LOOPING_SONGS = {"title", "field", "battle", "boss", "birthday",
+                 "battle_rain", "battle_farm", "battle_past",
+                 "battle_marsh", "battle_volcano"}
 
 
 def realize_song(spec, rng):

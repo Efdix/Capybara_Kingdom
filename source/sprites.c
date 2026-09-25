@@ -34,40 +34,43 @@ static const uint8_t *const g_hero_sheets[2] = {
 // Monster definitions
 // ---------------------------------------------------------------------------
 
-// One entry per enemy archetype. Every region fields the same three roles, so
-// the player learns them once and then has to apply them differently as the
-// regions get harder:
+// One entry per enemy archetype. Every region fields three residents, but no
+// two of the fifteen behave alike: each mob carries its own AI, its own stats
+// and its own ingredient drop rate, so every region asks for different movement
+// and every mob is worth reading before you fight it.
 //
-//   SWARM   small, fast, fragile. Harmless alone, lethal in the pack the later
-//           difficulties throw at you. Only melee.
-//   BRUTE   big, slow, armoured. Walks at you, then charges. Hits for two
-//           hearts, so it is the one you actually have to walk around.
-//   RANGED  keeps its distance and shoots. Soft, but it punishes standing still.
+//   雨林   飞蜂 weaves in fast, 树蛙 lobs arcing shots, 软泥 splits in two
+//   农场   田鼠 steals an ingredient and flees, 乌鸦 dive-bombs, 泥怪 erupts
+//   牧场   野犬 hunts in a pack, 黑羊 charges long, 牛虻 hastes its allies
+//   沼泽   毒蟒 spits bursts, 泥蟾 lobs two-shot volleys, 淤泥怪 splits
+//   火山   蝠翼 weaves, 火球 detonates on contact, 火灵 charges through you
 //
 // `radius` drives collision and reach; `scale` drives how big it looks, so the
-// size the player sees is the size the collision believes in.
+// size the player sees is the size the collision believes in. `drop_pct` is the
+// ingredient chance: brutes are the best ingredient source, swarm the worst,
+// which makes "which crowd do I wade into" a real choice.
 const MonsterDef g_monster_defs[] = {
-    //       ai          radius scale speed dmg  hp  exp
+    //       ai          radius scale speed dmg  hp  exp drop
     // --- 雨林 ---
-    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 0: rain_frog   树蛙   RANGED
-    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 1: rain_wasp   飞蜂   SWARM
-    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 2: rain_slime  软泥   BRUTE
+    { AI_LOBBER,       12,   100,    1,  1,  16,  20,  28 },  // 0: 树蛙
+    { AI_ZIGZAG,        7,    70,    2,  1,   8,  12,  16 },  // 1: 飞蜂
+    { AI_SPLITTER,     15,   140,    1,  2,  36,  30,  38 },  // 2: 软泥
     // --- 农场 ---
-    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 3: farm_rat    田鼠   SWARM
-    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 4: farm_crow   乌鸦   RANGED
-    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 5: farm_mudlet 泥怪   BRUTE
+    { AI_STEALER,       7,    72,    3,  1,  10,  18,   0 },  // 3: 田鼠
+    { AI_DIVER,        11,    95,    2,  1,  18,  24,  26 },  // 4: 乌鸦
+    { AI_NOVA,         17,   140,    1,  2,  46,  34,  40 },  // 5: 泥怪
     // --- 牧场 ---
-    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 6: past_dog    野犬   SWARM
-    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 7: past_ram    黑羊   BRUTE
-    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 8: past_hornet 牛虻   RANGED
+    { AI_PACK,          8,    82,    2,  1,  12,  15,  20 },  // 6: 野犬
+    { AI_CHARGER,      16,   135,    1,  2,  40,  34,  36 },  // 7: 黑羊
+    { AI_SUPPORT,      11,   100,    2,  1,  16,  26,  28 },  // 8: 牛虻
     // --- 沼泽 ---
-    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 9: marsh_slime 淤泥怪 BRUTE
-    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 10: marsh_viper 毒蟒  SWARM
-    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 11: marsh_toad 泥蟾   RANGED
+    { AI_SPLITTER,     16,   145,    1,  2,  52,  36,  40 },  // 9: 淤泥怪
+    { AI_SPITTER,       9,    88,    2,  1,  11,  16,  22 },  // 10: 毒蟒
+    { AI_LOBBER,       13,   115,    1,  1,  20,  26,  30 },  // 11: 泥蟾
     // --- 火山 ---
-    { AI_DASHER,       17,   135,    1,  2,  34,  32 },  // 12: volc_imp    火灵   BRUTE
-    { AI_CHASER,        8,    78,    2,  1,   9,  14 },  // 13: volc_bat    蝠翼   SWARM
-    { AI_SHOOTER,      12,   100,    1,  1,  17,  22 },  // 14: volc_orb    火球   RANGED
+    { AI_CHARGER,      15,   130,    2,  2,  44,  36,  38 },  // 12: 火灵
+    { AI_ZIGZAG,        7,    72,    3,  1,   9,  14,  18 },  // 13: 蝠翼
+    { AI_BOMBER,       10,   105,    1,  2,  14,  24,  28 },  // 14: 火球
 };
 
 #define MONSTER_DEF_COUNT (int)(sizeof(g_monster_defs) / sizeof(g_monster_defs[0]))
@@ -85,12 +88,19 @@ const MonsterDef *monster_def(int id)
 #define BOSS_CIRCLE_R 30
 
 // The drawn radius of any monster, boss or not. Everything that needs to know
-// how big a creature looks goes through here.
+// how big a creature looks goes through here. Splitter offspring and elites
+// scale off the def's own radius, so the collided size always matches the
+// drawn size.
 int monster_draw_radius(const Monster *m)
 {
     if (m->is_boss)
         return BOSS_CIRCLE_R;
-    return monster_def(m->def_id)->radius;
+    int r = monster_def(m->def_id)->radius;
+    int pct = m->scale_pct ? m->scale_pct : 100;
+    r = (r * pct) / 100;
+    if (m->elite)
+        r += 2;
+    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,8 +126,20 @@ static int hero_frame(const Hero *h)
         return HF_ATTACK + f;
     }
     if (h->moving)
-        return HF_WALK_A + ((h->anim >> 3) % HF_WALK_N);
-    return HF_IDLE + ((h->anim >> 4) & 3);
+    {
+        // Distance, not frames: see HERO_WALK_STEP_PX. `anim` still counts
+        // frames, and the speed multiplies here, so the stride stays the same
+        // length whether the capybara is at 3 pixels a frame or at 6.
+        int phase = (int)(h->anim * h->move_speed) / HERO_WALK_STEP_PX;
+        return HF_WALK_A + (phase % HF_WALK_N);
+    }
+
+    // The idle cycle runs on the wall clock. It used to be sampled from the
+    // same counter the walk advanced -- a counter that only ever incremented
+    // while moving -- so four idle poses existed and a standing capybara never
+    // got past whichever one the last step happened to leave it on. Offsetting
+    // by variant keeps the pair from breathing in unison.
+    return HF_IDLE + ((((g_frame >> 4) + (h->variant & 1) * 2)) & 3);
 }
 
 void draw_hero(int index)
@@ -129,9 +151,19 @@ void draw_hero(int index)
     const uint8_t *tiles = g_hero_sheets[h->variant & 1];
     int frame = h->facing * HERO_FRAMES + hero_frame(h);
 
+    // The first three frames of the hit reaction are drawn as a bright
+    // silhouette. This is derived from the invulnerability window the blow just
+    // opened rather than from hurt_stun, because 厚皮 sets hurt_stun to zero --
+    // keying off that would have made the players who invested in the tanky
+    // line the only ones who never saw that they had been hit.
+    int inv_start = (g_skill_tree.agi_lv >= 2) ? 90 : 60;
+    if (h->invuln + 3 > inv_start)
+        gfx_flash_begin(PAL_WHITE_SPARK);
+
     // Left-facing art is stored as mirrored right-facing rows, so no runtime
     // flip is needed.
     gfx_blit_8bpp(tiles, HERO_W, HERO_H, frame, h->x, h->y, false, true);
+    gfx_flash_end();
 
     int32_t cx, cy;
     hero_center(h, &cx, &cy);
@@ -151,6 +183,51 @@ void draw_hero(int index)
             gfx_circle(ox, oy, 2, PAL_CYAN_LIGHT);
             gfx_circle(ox, oy, 1, PAL_WHITE_SPARK);
         }
+    }
+
+    // The ultimate release. It is the biggest thing the player does, and
+    // without something drawn for it the only feedback was the screen shake --
+    // which reads as being hit, not as hitting.
+    //
+    // ult_flash counts down from 30, so `t` runs 0..29 across the release and
+    // drives both the expansion of the rings and the travel of the sparks. The
+    // two capybaras set off different colours -- the shockwave is hot white and
+    // amber, the shelter is soft green -- so in a two-player run a partner's
+    // ultimate is identifiable from across the arena.
+    if (h->ult_flash > 0)
+    {
+        int t = 30 - (int)h->ult_flash;
+        bool shelter = (h->variant & 1) != 0;
+
+        for (int k = 0; k < 3; k++)
+        {
+            int r = 12 + k * 15 + t * 3;
+            int phase = (t + k * 5) % 12;
+            uint8_t c;
+            if (shelter)
+                c = (phase < 4) ? PAL_HEAL_CORE
+                                : (phase < 8 ? PAL_HEAL_INNER : PAL_HEAL_OUTER);
+            else
+                c = (phase < 4) ? PAL_ARC_CORE
+                                : (phase < 8 ? PAL_ORANGE_MID : PAL_LAVA_DARK);
+            gfx_circle_outline(cx, cy, r, c);
+            gfx_circle_outline(cx, cy, r - 1, c);
+        }
+
+        // Sparks flying outward along sixteen spokes.
+        int sr = 20 + t * 4;
+        for (int a = 0; a < 256; a += 16)
+        {
+            int dx, dy;
+            gfx_dir_256(a, &dx, &dy);
+            gfx_fill_rect(cx + (dx * sr) / 127, cy + (dy * sr) / 127,
+                          2, 2, PAL_WHITE_SPARK);
+        }
+        // A bright core for the first few frames only, so the release reads as
+        // an instant rather than as a slow bloom.
+        if (t < 6)
+            gfx_circle(cx, cy, 16 - t * 2,
+                       shelter ? PAL_HEAL_CORE : PAL_ARC_CORE);
     }
 
     // Invulnerability flashes a ring under the character. Blinking the sprite
@@ -182,16 +259,41 @@ void draw_monster(int index)
 
     if (m->is_boss)
     {
-        int f = 0;
-        if (m->hurt_timer > 0)
-            f = 3;
+        // Bosses carry eight poses. Which one shows is the whole read of the
+        // fight, so the order of these tests is the order of importance:
+        // broken > winding up > mid-attack > enraged > hurt > walking.
+        //
+        // It starts at BF_IDLE rather than being left to the chain. As a bare
+        // `int f;` the chain had a hole in it: a phase-1 boss with every timer
+        // at zero, on a frame where the bob bit was clear, matched no branch at
+        // all -- and `frame = boss_id * 8 + <garbage>` then indexed anywhere in
+        // the sheet. Resting is the correct answer for that boss, so say so.
+        int f = BF_IDLE;
+        if (m->stagger_timer > 0)
+            f = BF_STAGGER;
+        else if (m->hurt_timer > 0)
+            f = BF_HURT;
         else if (m->boss_skill_timer > 0)
-            f = 2;
+            // The field boss telegraphs for 40 frames and lands the blow at
+            // 20: the back half of that is a coiled wind-up, the front half is
+            // the strike itself. Splitting on the same boundary the damage
+            // uses is what keeps the pose honest.
+            f = (m->boss_skill_timer > 20) ? BF_WINDUP : BF_SPECIAL_A;
+        else if (m->attack_timer > 0)
+            f = BF_ATTACK;
+        else if (m->phase > 0 && ((g_frame >> 3) & 1) == 0)
+            f = BF_SPECIAL_B;   // phase 2+: the enraged stance, half the time
         else if ((g_frame >> 3) & 1)
-            f = 1;
+            f = BF_BOB;
 
-        int frame = m->boss_id * 4 + f;
+        int frame = m->boss_id * BOSS_FRAMES + f;
+        // The first frames of a hurt reaction are drawn as a bright silhouette.
+        // A boss is 64x64 and mostly body, so "that landed" has to be said
+        // unambiguously or it is lost under the health bar.
+        if (m->hurt_timer > 5)
+            gfx_flash_begin(PAL_WHITE_SPARK);
         gfx_blit_8bpp(boss_tiles_bin, 64, 64, frame, cx - 32, cy - 32, hflip, true);
+        gfx_flash_end();
     }
     else
     {
@@ -201,14 +303,24 @@ void draw_monster(int index)
         else if (m->attack_timer > 0)
             f = 2;
 
-        else if ((g_frame >> 3) & 1)
+        else if (((g_frame + m->bob_phase) >> 3) & 1)
             f = 1;
 
-        int pct = monster_def(m->def_id)->scale;
+        // Splitter offspring and elites redraw the same sheet at their own
+        // size, so a small slime genuinely looks like a small slime.
+        int pct = m->scale_pct ? (int)m->scale_pct
+                               : (int)monster_def(m->def_id)->scale;
         int drawn = (MOB_W * pct) / 100;
         int frame = m->def_id * 4 + f;
+        // Two or three frames of silhouette on contact. This is the single
+        // clearest "I hit that one" the crowd can give, and with forty of them
+        // on screen the alternative is trusting the player to spot which of the
+        // forty just lost health.
+        if (m->hurt_timer > 5)
+            gfx_flash_begin(PAL_WHITE_SPARK);
         gfx_blit_8bpp_scaled(mob_tiles_bin, MOB_W, MOB_H, frame,
                              cx - drawn / 2, cy - drawn / 2, hflip, true, pct);
+        gfx_flash_end();
     }
 
 
@@ -221,6 +333,30 @@ void draw_monster(int index)
         gfx_circle_outline(cx, cy, r + 1, PAL_HEAL_INNER);
     else if (m->slow_timer > 0)
         gfx_circle_outline(cx, cy, r + 1, PAL_CLAY_DARK);
+
+    // Elites wear a gold outline and a three-point crown: a crowd of 40 has to
+    // show its VIP without a tooltip, and "gold means worth killing" is the
+    // one rule the whole drop economy agrees on.
+    if (m->elite)
+    {
+        gfx_circle_outline(cx, cy, r + 2,
+                           ((g_frame >> 3) & 1) ? PAL_UI_GOLD_LIGHT
+                                                : PAL_UI_GOLD);
+        int cy0 = cy - r - 8;
+        gfx_fill_rect(cx - 5, cy0 + 2, 11, 2, PAL_UI_GOLD);
+        gfx_fill_rect(cx - 5, cy0 - 1, 2, 3, PAL_UI_GOLD);
+        gfx_fill_rect(cx - 1, cy0 - 2, 2, 4, PAL_UI_GOLD);
+        gfx_fill_rect(cx + 3, cy0 - 1, 2, 3, PAL_UI_GOLD);
+        gfx_fill_rect(cx - 1, cy0 - 1, 2, 2, PAL_UI_GOLD_LIGHT);
+    }
+
+    // A hasted mob sparks: the support buff is visible from the far side of a
+    // fight, which is what makes the hornet a priority target.
+    if (m->haste_timer > 0 && ((g_frame >> 2) & 1))
+    {
+        gfx_fill_rect(cx - r - 3, cy - 2, 2, 2, PAL_UI_GOLD_LIGHT);
+        gfx_fill_rect(cx + r + 1, cy - 2, 2, 2, PAL_UI_GOLD_LIGHT);
+    }
 
     // A shooter telegraphs its attack with a bright ring, which is the one
     // enemy behaviour a player has to be able to predict.
@@ -249,6 +385,85 @@ void draw_monster(int index)
         gfx_fill_rect(x0, y0, w, 5, PAL_HUD_HEART_EMPTY);
         int fill_w = (int)((int32_t)w * m->hp / m->hp_max);
         gfx_fill_rect(x0, y0, fill_w, 5, PAL_HUD_HEART);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Telegraphs (预警)
+//
+// Every hostile move lays one of these down before it fires, and the shape is
+// the same in every region so the vocabulary transfers: a ring means "this
+// lands here", a lane means "this crosses here", an arc means "this sweeps
+// here". They are drawn as outlines that fill as their timer drains, so the
+// remaining life is legible without a HUD -- the player reads "not yet, not
+// yet, NOW" off the shape itself.
+// ---------------------------------------------------------------------------
+void draw_telegraph(int index)
+{
+    Telegraph *t = &g_telegraphs[index];
+    if (!t->alive || t->life == 0)
+        return;
+
+    if (t->delay > 0)
+    {
+        // Held back: part of a chain whose turn has not come. Shown faintly,
+        // because knowing a combo is coming is not the same as being told
+        // where its first beat lands.
+        gfx_circle_outline(t->x, t->y, t->radius, PAL_UI2_SHADOW);
+        return;
+    }
+
+    // `fill` runs 0..100 across the shape's life, and is what turns a static
+    // outline into a countdown: the shape closes on itself as the move nears.
+    int total = t->life_max ? t->life_max : 1;
+    int elapsed = total - t->life;
+    int fill = elapsed * 100 / total;
+    uint8_t hot = ((g_frame >> 2) & 1) ? PAL_RED_LIGHT : PAL_WHITE_SPARK;
+
+    switch (t->kind)
+    {
+    case TG_CHAIN:
+    case TG_CIRCLE:
+    {
+        gfx_circle_outline(t->x, t->y, t->radius, hot);
+        int inner = t->radius * fill / 100;
+        if (inner > 1)
+            gfx_circle_outline(t->x, t->y, inner, PAL_RED_DARK);
+        if (fill > 80)
+            gfx_circle_outline(t->x, t->y, t->radius - 1, PAL_WHITE_SPARK);
+        break;
+    }
+    case TG_LINE:
+    {
+        // A lane on the floor, filling along its length toward the far end.
+        int y0 = (int)t->y;
+        int h = t->radius ? t->radius : 16;
+        int x0 = (int)t->x, x1 = (int)t->x2;
+        if (x1 < x0) { int s = x0; x0 = x1; x1 = s; }
+        gfx_rect_outline(x0, y0 - h, x1 - x0, h, hot);
+        int w = (x1 - x0) * fill / 100;
+        if (w > 1)
+            gfx_fill_rect(x0, y0 - h + 2, w, h - 4, PAL_RED_DARK);
+        break;
+    }
+    case TG_ARC:
+    default:
+    {
+        // A sweep: stamped circles along the swing path, so the arc reads as
+        // travelling and "step behind it" is what the shape suggests.
+        int x0 = (int)t->x, y0 = (int)t->y;
+        int x1 = (int)t->x2, y1 = (int)t->y2;
+        for (int a = 0; a < 6; a++)
+        {
+            int px = x0 + (x1 - x0) * a / 6;
+            int py = y0 + (y1 - y0) * a / 6;
+            (void)py;
+            gfx_circle_outline(px, y1, t->radius * (100 - a * 8) / 100, hot);
+        }
+        if (fill > 70)
+            gfx_line(x0, y0, x1, DUEL_GROUND_Y, PAL_WHITE_SPARK);
+        break;
+    }
     }
 }
 
@@ -290,5 +505,34 @@ void draw_gem(int index)
         gfx_fill_rect(x, y, 1, 1, PAL_WHITE_SPARK);
         if ((g_frame >> 2) & 1)
             gfx_circle_outline(x, y, 6, PAL_UI_GOLD_LIGHT);
+    }
+    else if (g->kind == GEM_SEED)
+    {
+        // A seed: a fat amber pip with a pale sprout at the tip. Deliberately
+        // smaller than the old ingredient nugget, because there are many more
+        // of them -- and green at the top, which is what marks it as something
+        // that grows rather than something you hand in.
+        gfx_fill_rect(x - 2, y - 1, 4, 4, PAL_OUTLINE);
+        gfx_fill_rect(x - 1, y, 2, 3, PAL_UI_GOLD);
+        gfx_fill_rect(x - 1, y + 1, 1, 2, PAL_UI_GOLD_LIGHT);
+        gfx_fill_rect(x, y - 2, 1, 1, PAL_GREEN_SPARK);
+        gfx_fill_rect(x - 1, y - 3, 1, 1, PAL_LEAF_LIGHT);
+    }
+    else if (g->kind == 3)
+    {
+        // Heart drop: the only mid-run sustain besides level-ups, so it is
+        // drawn in the same shape the HUD uses and pulses to be findable in a
+        // crowd of green motes.
+        uint8_t fill = ((g_frame >> 3) & 1) ? PAL_HUD_HEART : PAL_HUD_HEART_DARK;
+        gfx_fill_rect(x - 3, y - 2, 2, 2, PAL_OUTLINE);
+        gfx_fill_rect(x + 1, y - 2, 2, 2, PAL_OUTLINE);
+        gfx_fill_rect(x - 3, y - 1, 6, 3, PAL_OUTLINE);
+        gfx_fill_rect(x - 2, y + 2, 4, 1, PAL_OUTLINE);
+        gfx_fill_rect(x - 1, y + 3, 2, 1, PAL_OUTLINE);
+        gfx_fill_rect(x - 2, y - 1, 1, 1, fill);
+        gfx_fill_rect(x + 1, y - 1, 1, 1, fill);
+        gfx_fill_rect(x - 2, y, 4, 2, fill);
+        gfx_fill_rect(x - 1, y + 2, 2, 1, fill);
+        gfx_fill_rect(x - 2, y - 1, 1, 1, PAL_PINK_LIGHT);
     }
 }

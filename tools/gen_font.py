@@ -65,8 +65,10 @@ ASCII = ("ABCDEFGHIJKLMNOPQRSTUVWXYZ"
          "0123456789"
          " .,:;!?'\"()[]-+/*%#<>=_&@$")
 
-# Chinese punctuation and typographic marks used in dialogue.
-CJK_PUNCT = "，。！？、：；“”‘’（）《》…—～·"
+# Chinese punctuation, typographic marks, and the arrow set the menus use for
+# direction hints. The vertical pair is here because a hint that offers
+# "up / down" while the atlas can only draw "up" has to fall back to words.
+CJK_PUNCT = "，。！？、：；“”‘’（）《》…—～·↑↓←→▶◀"
 
 
 def render_glyph(ch, font):
