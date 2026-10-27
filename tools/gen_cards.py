@@ -38,6 +38,7 @@ Outputs (both into graphics/ unless an output dir is given on the command line):
 
 import math
 import os
+import random
 import re
 import sys
 
@@ -1246,8 +1247,57 @@ def build_card(kind, emblem, name="", fuse=False):
         c.round_rect(hx - 7, HEADER_Y0 + 3, 14, 7, 1, ix(acc))
         c.round_rect(hx - 5, HEADER_Y0 + 4, 10, 4, 1, ix("white_spark"))
 
-    # --- art window: clean warm ivory arena ---
-    c.rect(ART_X0, ART_Y0, ART_W, ART_H, ix("cream"))
+    # --- art window: a per-kind atmosphere, not a flat fill -----------------
+    #
+    # The window used to be a plain cream rectangle, so all twenty emblems
+    # floated on the same empty page. Now each kind gets its own stage: a
+    # dithered radial glow behind the emblem plus a sparse texture pass, all
+    # in light tones so the emblem still reads first.
+    c.rect(ART_X0, ART_Y0, ART_W, ART_H, ix(win_dark))
+    stage = {
+        KIND_PHYS:    ("tan_light", "tan_belly", "yellow_light"),
+        KIND_MAGIC:   ("sea_light", "cream", "cyan_light"),
+        KIND_SUPPORT: ("grn_light", "cream", "heal_inner"),
+        KIND_PASSIVE: ("wheat_light", "cream", "ui_gold_light"),
+    }[kind]
+    cx_w = ART_X0 + ART_W / 2
+    cy_w = ART_Y0 + ART_H / 2
+    c.rect(ART_X0 + 1, ART_Y0 + 1, ART_W - 2, ART_H - 2, ix(stage[0]))
+    c.dither_rect(ART_X0 + 1, ART_Y0 + 1, ART_W - 2, ART_H - 2,
+                  stage[1], parity=1)
+    # radial glow: bright core behind where the emblem sits
+    for (rr, col, par) in ((26, stage[2], 0), (19, stage[1], 1),
+                           (12, stage[2], 1)):
+        c.dither_ellipse(cx_w, cy_w, rr, rr * 0.9, col, parity=par)
+    # texture pass per kind, sparse enough to stay behind the emblem
+    rng = random.Random(hash(name) & 0xFFFF)
+    if kind == KIND_PHYS:
+        for k in range(6):   # speed rays
+            a = math.radians(k * 60 + 15)
+            x0 = cx_w + 14 * math.cos(a)
+            y0 = cy_w + 13 * math.sin(a)
+            x1 = cx_w + 26 * math.cos(a)
+            y1 = cy_w + 24 * math.sin(a)
+            c.hline(int(x0), int(x1), int(y0), ix(stage[2]))
+    elif kind == KIND_MAGIC:
+        for k in range(7):   # rising bubbles
+            bx = ART_X0 + 4 + rng.randrange(ART_W - 8)
+            by = ART_Y0 + 6 + rng.randrange(ART_H - 12)
+            r = 1 + rng.randrange(2)
+            c.circle(bx, by, r, ix(stage[2]))
+            c.set(bx - 1, by - 1, ix("white"))
+    elif kind == KIND_SUPPORT:
+        for k in range(6):   # drifting petals
+            bx = ART_X0 + 4 + rng.randrange(ART_W - 8)
+            by = ART_Y0 + 6 + rng.randrange(ART_H - 12)
+            c.set(bx, by, ix(stage[2]))
+            c.set(bx + 1, by, ix(stage[2]))
+            c.set(bx, by + 1, ix("white"))
+    else:
+        for k in range(8):   # golden motes
+            bx = ART_X0 + 4 + rng.randrange(ART_W - 8)
+            by = ART_Y0 + 6 + rng.randrange(ART_H - 12)
+            c.set(bx, by, ix("ui_gold"))
     c.hline(ART_X0, ART_X0 + ART_W - 1, ART_Y0, ix(win_dark))
     c.vline(ART_X0, ART_Y0 + 1, ART_Y0 + ART_H - 1, ix(win_dark))
     c.hline(ART_X0 + 1, ART_X0 + ART_W - 1, ART_Y0 + ART_H - 1, ix(win_light))

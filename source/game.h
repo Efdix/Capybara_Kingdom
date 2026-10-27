@@ -485,6 +485,15 @@ typedef struct {
     uint16_t move_speed;
     uint16_t pickup_r;      // pickup radius for exp and ingredients
 
+    // --- game feel: subpixel movement and decaying knockback ----------------
+    // Subpixel remainders (1/256 px) let a diagonal step move at 70.7% of the
+    // cardinal speed without the truncation that would otherwise read as a
+    // stutter. Knockback is a short decaying velocity rather than a one-frame
+    // teleport, so a hit shoves instead of skipping.
+    int16_t  sub_x, sub_y;
+    int8_t   kb_vx, kb_vy;  // knockback velocity, pixels per frame
+    uint8_t  kb_timer;      // frames of knockback left
+
     // --- boss duel movement (side-view arena) ---
     // In the duel x/y are arena coordinates and the d-pad drives a runner:
     // jump arcs with half-pixel vertical speed, the roll is a short dash with
@@ -495,6 +504,11 @@ typedef struct {
     uint8_t  roll_cd;       // frames until the next roll
     int8_t   roll_dir;      // -1 / +1 while rolling
     bool     roll_air;      // the air roll of the current jump is spent
+    // Input buffers: a press that lands a few frames before it can be answered
+    // (in the air, mid-roll cooldown) is held here briefly, so a jump or roll
+    // fires on the first frame it becomes possible instead of being eaten.
+    uint8_t  jump_buffer;
+    uint8_t  roll_buffer;
 
     // --- network mirror for the remote capybara ---
     int32_t  net_x, net_y;
@@ -553,7 +567,10 @@ const MonsterDef *monster_def(int id);
 // that the crowd hides the player rather than threatening them.
 #define MAX_MONSTERS     48
 #define MAX_PROJECTILES  40
-#define MAX_GEMS         96
+// Sized so a full raid wave's drops survive the fight: 48 monsters at the top
+// drop rate plus a boss fountain used to overflow the old pool of 96, and the
+// newest drops -- the ones the player was walking toward -- were the ones lost.
+#define MAX_GEMS         128
 #define MAX_EFFECTS      40
 // Damage numbers. This was 28 while the arena can hold 48 monsters and a
 // mastered 尖牙 bites three times a frame: in a dense wave the pool filled and
@@ -858,6 +875,11 @@ extern uint16_t  g_region_kills;
 // the duel boss and is drained by net.c into the hero packet; on the host it
 // carries the frame flag "the boss just hit the partner's capybara".
 extern uint16_t  g_duel_hit_pending;
+// The defeat beat: frames left of the local capybara's fall before the game
+// over plate arrives. Zero means nobody is dying. The pause between the last
+// heart and the plate is what makes a defeat read as an event rather than as
+// a screen swap.
+extern uint8_t   g_hero_death_beat;
 // Amount of damage the duel boss just dealt to the PARTNER's capybara on the
 // host console; net.c carries it to the client and clears it.
 extern uint8_t   g_duel_hit_amt;
@@ -949,6 +971,7 @@ void gfx_circle_outline(int cx, int cy, int r, uint8_t color);
 // the circle outlines and anything else that needs to place something on a ring.
 void gfx_dir_256(int angle, int *dx, int *dy);
 void gfx_line(int x0, int y0, int x1, int y1, uint8_t color);
+void gfx_hline(int x0, int x1, int y, uint8_t color);
 bool collision_at(int px, int py);
 bool collision_rect(int px, int py, int w, int h);
 bool collision_open_near(int px, int py, int radius);
@@ -1001,6 +1024,10 @@ void top_rect_outline(int x, int y, int w, int h, uint8_t color);
 uint16_t input_held(void);
 uint16_t input_down(void);
 void input_poll(void);
+// Bank key edges pressed while the world is frozen (hitstop). The next poll
+// merges them into input_down(), so a press the player made in reaction to a
+// hit is answered rather than swallowed by the freeze.
+void input_latch(uint16_t keys);
 // Screen-capture diagnostics (autoplay builds only): live script position.
 int  autoplay_debug_step(void);
 int  autoplay_debug_left(void);

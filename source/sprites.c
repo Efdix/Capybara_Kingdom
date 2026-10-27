@@ -179,6 +179,7 @@ void draw_hero(int index)
             int ox = cx + (dx * 22) / 127;
             int oy = cy + (dy * 22) / 127;
 
+            gfx_circle(ox, oy, 5, PAL_CYAN_DARK);
             gfx_circle(ox, oy, 4, PAL_CYAN_MID);
             gfx_circle(ox, oy, 2, PAL_CYAN_LIGHT);
             gfx_circle(ox, oy, 1, PAL_WHITE_SPARK);
@@ -222,6 +223,17 @@ void draw_hero(int index)
             gfx_dir_256(a, &dx, &dy);
             gfx_fill_rect(cx + (dx * sr) / 127, cy + (dy * sr) / 127,
                           2, 2, PAL_WHITE_SPARK);
+        }
+        // Chunks of the burst tumbling out behind the light: four heavy
+        // specks that lag and drop, which is what gives the release weight.
+        int dr = sr + 6;
+        for (int a = 0; a < 256; a += 64)
+        {
+            int dx, dy;
+            gfx_dir_256(a + 32, &dx, &dy);
+            gfx_fill_rect(cx + (dx * dr) / 127,
+                          cy + (dy * dr) / 127 + t / 2, 2, 1,
+                          shelter ? PAL_HEAL_INNER : PAL_ORANGE_MID);
         }
         // A bright core for the first few frames only, so the release reads as
         // an instant rather than as a slow bloom.
@@ -306,10 +318,22 @@ void draw_monster(int index)
         else if (((g_frame + m->bob_phase) >> 3) & 1)
             f = 1;
 
+        AiType ai = monster_def(m->def_id)->ai;
+
         // Splitter offspring and elites redraw the same sheet at their own
         // size, so a small slime genuinely looks like a small slime.
         int pct = m->scale_pct ? (int)m->scale_pct
                                : (int)monster_def(m->def_id)->scale;
+
+        // The mud nova's swell IS its telegraph: the eruption is only
+        // answerable if the inflation is visible, so the body grows as the
+        // blow nears -- drawn wider than tall, which reads as pressure.
+        if (ai == AI_NOVA && m->state == 1 && m->state_timer > 0)
+        {
+            int t = 36 - m->state_timer;   // 0..36 across the wind-up
+            pct += (t * 26) / 36;
+        }
+
         int drawn = (MOB_W * pct) / 100;
         int frame = m->def_id * 4 + f;
         // Two or three frames of silhouette on contact. This is the single
@@ -321,6 +345,30 @@ void draw_monster(int index)
         gfx_blit_8bpp_scaled(mob_tiles_bin, MOB_W, MOB_H, frame,
                              cx - drawn / 2, cy - drawn / 2, hflip, true, pct);
         gfx_flash_end();
+
+        // Melee wind-ups that the crowd would otherwise hide. The charge and
+        // the dive both lock their aim before they move, so the warning is a
+        // ring on the target -- closing as the move nears -- plus, for the
+        // charge, the lane it will cross.
+        if ((ai == AI_CHARGER || ai == AI_DIVER) && m->state == 1 &&
+            m->state_timer > 0)
+        {
+            int windup = (ai == AI_CHARGER) ? 45 : 35;
+            int rr = 9 + (m->state_timer * 15) / windup;
+            uint8_t hot = ((g_frame >> 2) & 1) ? PAL_RED_LIGHT
+                                               : PAL_WHITE_SPARK;
+            gfx_circle_outline(m->boss_tx, m->boss_ty, rr, hot);
+            gfx_circle_outline(m->boss_tx, m->boss_ty, rr - 2, PAL_RED_DARK);
+            if (ai == AI_CHARGER)
+                gfx_line(cx, cy, m->boss_tx, m->boss_ty, PAL_RED_DARK);
+        }
+        if (ai == AI_NOVA && m->state == 1 && m->state_timer > 0)
+        {
+            uint8_t hot = ((g_frame >> 2) & 1) ? PAL_RED_LIGHT
+                                               : PAL_WHITE_SPARK;
+            gfx_circle_outline(cx, cy, r + 2, hot);
+            gfx_circle_outline(cx, cy, r + 5, PAL_RED_DARK);
+        }
     }
 
 

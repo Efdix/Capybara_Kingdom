@@ -25,9 +25,16 @@ static bool     g_touch_down = false;    // touching right now
 static bool     g_touch_pressed = false; // went down since the last poll
 static uint16_t g_touch_x = 0, g_touch_y = 0;
 
+// Key edges banked while the world was frozen (hitstop). input_poll() merges
+// them into the next poll's edges and clears them, so a press made during the
+// freeze is answered by the first frame that actually runs.
+static uint16_t g_latch = 0;
+
 bool input_touch_pressed(void) { return g_touch_pressed; }
 uint16_t input_touch_x(void) { return g_touch_x; }
 uint16_t input_touch_y(void) { return g_touch_y; }
+
+void input_latch(uint16_t keys) { g_latch |= keys; }
 
 // Is the touch currently inside a rectangle on the bottom screen?
 bool input_touch_in(int x, int y, int w, int h)
@@ -50,8 +57,9 @@ static uint16_t g_down = 0;
 void input_poll(void)
 {
     scanKeys();
-    g_held = keysHeld();
-    g_down = keysDown();
+    g_held = (uint16_t)(keysHeld() | g_latch);
+    g_down = (uint16_t)(keysDown() | g_latch);
+    g_latch = 0;
 
     // libnds reports the raw panel state; a touch is only meaningful once the
     // panel has settled, so the position is only trusted while it is down.
@@ -466,8 +474,9 @@ void input_poll(void)
         g_left = script[0].frames;
 
     uint16_t keys = script[g_step].keys;
-    g_down = (uint16_t)(keys & ~g_held);   // edge detection for "just pressed"
-    g_held = keys;
+    g_down = (uint16_t)((keys & ~g_held) | g_latch);   // edge detection for "just pressed"
+    g_held = (uint16_t)(keys | g_latch);
+    g_latch = 0;
 
 #if defined(AUTOPLAY_TAP_CARD)
     int phase = g_script_frame % TAP_PERIOD;

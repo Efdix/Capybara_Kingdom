@@ -1,15 +1,36 @@
 """
-gen_heroes.py -- Procedural generation of 32x32 Zen Chubby Capybaras (佛系胖水豚).
-Aesthetic: Classic GBC (Capybara Village) & Pokémon Gen 2/3 handheld pixel art style.
+gen_heroes.py -- the two playable capybaras of Capybara Kingdom.
 
-Updated Proportions:
-  - "身体大些头小些" (Dominant chunky bread-loaf body, compact cute head)
-  - "四肢可以不用如此显眼" (Unobtrusive stubby little paws tucked low under belly)
-  - "佛系一字横线眼" (Zen calm slit eyes `— —`)
+  公「卡」 hero_m  warm chestnut brown
+  母「皮」 hero_f  soft golden tan: the SAME painter run through
+                   gen_common's VARIANT_FEMALE remap (brown -> tan), here
+                   extended with the matching fur-ramp names. 皮 also wears
+                   a small flower by her left ear (leaf -> pink via the same
+                   remap).
 
-Characters:
-  hero_m  P1 阿棕 (Warm Chestnut Brown + Mini Yuzu on head)
-  hero_f  P2 阿奶 (Soft Golden Milk Tea Tan + Green Sprout on head)
+Art direction: GBA Pokemon partner proportions -- the head is the widest
+shape on the sprite and clearly wider than the body behind it, ears are
+separate bumps on top of the outline (not merged into it), the eyes are big
+glossy features with a double glint, the muzzle is a light plane with a
+small dark nose, and everything is lit in two hard planes (bottom shadow +
+top-left rim) under a crisp near-black outline. The 卡 / 皮 forehead brand
+stays: a hand-thinned 7x7 dot matrix drawn as ink INSIDE the silhouette.
+
+Per-frame pipeline:
+    fur base shapes + belly patch + muzzle plane
+    -> pk_shade_bottom(brn_deep)    underside plane (thin parts skipped)
+    -> pk_rim(brn_hl)               lit plane (far limbs painted deep and
+                                    protected from the rim)
+    -> ink details (pk_eye, nose, mouth, brand, claws)
+    -> FX (sweat drops, bite arc + sparkle)
+    -> auto_outline()               LAST, so nothing eats the outline
+
+Sheet contract (mirrors source/assets.h and sprites.c::hero_frame()):
+    32x32, 8 directions x 16 frames; per direction idle 4 / walk 6 / bite 4
+    / hurt 2. Direction order DIR_DOWN, DIR_UP, DIR_LEFT (stored as a mirror
+    of right), DIR_RIGHT, then the diagonals with down-left / up-left stored
+    mirrored from their right-hand twins. Every frame keeps a 1px empty
+    margin so the outline always has somewhere to grow; main() asserts it.
 """
 
 import os
@@ -27,726 +48,557 @@ FRAMES_PER_DIR = 16
 ANIM_ORDER = [
     ("idle", 4),
     ("walk", 6),
-    ("attack", 4),
+    ("bite", 4),
     ("hurt", 2),
 ]
 
-# Four-tone fur ramps. The extra two stops (fur_hi, fur_shadow) are what the
-# volume pass paints the lit rim and the contact shadow with; without them the
-# body ends up reading as one flat tone however good the silhouette is.
+# The female is the male painter with the palette's variant remap applied
+# (brown -> tan, leaf -> flower).
+VARIANT_F = dict(gc.VARIANT_FEMALE)
+VARIANT_F.update({
+    "brn_shadow": "tan_shadow",
+    "brn_deep": "tan_deep",
+    "brn_hi": "tan_hi",
+    "brn_hl": "tan_hl",
+})
+
 HEROES = [
-    ("hero_m", "阿棕", {
-        "outline": "outline",
-        "fur_main": "brn_mid",
-        "fur_dark": "brn_deep",
-        "fur_light": "brn_hi",
-        "fur_hi": "brn_hl",
-        "fur_shadow": "brn_shadow",
-        "fur_belly": "brn_belly",
-        "ear_inner": "brn_shadow",
-        "snout_col": "brn_light",
-        "blush_col": "blush",
-        "nostril": "black",
-        "eye_col": "black",
-        "incisor": "white",
-        "incisor_edge": "yellow_dark",
-        "item": "yuzu",
-    }),
-    ("hero_f", "阿奶", {
-        "outline": "outline",
-        "fur_main": "tan_mid",
-        "fur_dark": "tan_deep",
-        "fur_light": "tan_hi",
-        "fur_hi": "tan_hl",
-        "fur_shadow": "tan_shadow",
-        "fur_belly": "cream",
-        "ear_inner": "tan_shadow",
-        "snout_col": "tan_light",
-        "blush_col": "pink_mid",
-        "nostril": "black",
-        "eye_col": "black",
-        "incisor": "white",
-        "incisor_edge": "yellow_dark",
-        "item": "sprout",
-    }),
+    ("hero_m", "卡", None),
+    ("hero_f", "皮", VARIANT_F),
+]
+
+# Forehead brand: 7x7 dot matrices, hand-thinned from a bold system-font
+# rendering so every surviving stroke reads at 1px. Bottom strokes are kept
+# clear of the eye columns; see the eye positions in paint_front.
+KANJI = {
+    "卡": [
+        "...X...",
+        "...XXX.",
+        "...X...",
+        ".XXXXX.",
+        "...X.X.",
+        "...X.X.",
+        "...X...",
+    ],
+    "皮": [
+        ".XXXXX.",
+        "X....XX",
+        "X...X.X",
+        ".X.XX..",
+        ".X..X.X",
+        "..X.XX.",
+        "..X..X.",
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# Pose: the animation driver
+# ---------------------------------------------------------------------------
+
+def pose_for(anim, f):
+    """Turn (anim, frame) into the pose parameters every painter consumes.
+
+    Frame TIMING lives only here; the painters decide where things are
+    drawn. That keeps the six walk frames of every direction in antiphase
+    by construction instead of by eight copies of the same table.
+    """
+    p = {
+        "bob": 0,           # body+head vertical offset; feet stay planted
+        "lunge": 0,         # bite: head thrust forward
+        "recoil": 0,        # hurt: head thrown backward
+        "ear": (0, 0),      # ear micro-motion (dx, dy)
+        "waddle": 0,        # front/back body sway
+        "tilt": 0,          # whole-sprite shiver (hurt recovery)
+        "eyes": "open",     # open | blink | hurt
+        "mouth": "closed",  # closed | open | chomp | scream | wavy
+        "arc": False,       # white bite-arc fx
+        "sweat": False,     # two sweat drops overhead
+        "paw": 0,           # 0..2 front paws raised (bite)
+        "legf": 0,          # side view: near-front leg stride
+        "legb": 0,          # side view: near-back leg (antiphase)
+        "footl": 0,         # front/back views: 1 = foot lifted
+        "footr": 0,
+    }
+    if anim == "idle":
+        # Breathe: base, inhale and hold, exhale overshoot. The ears flick
+        # on every second frame and the cycle blinks once, on the hold.
+        p["bob"] = (0, -1, -1, 1)[f]
+        p["ear"] = ((-1, 0, 1, 0)[f], 0)
+        if f == 2:
+            p["eyes"] = "blink"
+    elif anim == "walk":
+        # Three half-strides: contact (legs spread, body pressed low) ->
+        # passing (legs gathered, body lifted) x3. Near-front and near-back
+        # legs move in antiphase; the ears and the sway follow the stride.
+        p["bob"] = (1, 0, -1, 1, 0, -1)[f]
+        p["legf"] = (2, 1, 0, -2, -1, 0)[f]
+        p["legb"] = -p["legf"]
+        p["waddle"] = (-1, -1, 0, 1, 1, 0)[f]
+        p["footr"] = 1 if f in (0, 1) else 0
+        p["footl"] = 1 if f in (3, 4) else 0
+        p["ear"] = (-p["waddle"], 0)
+    elif anim == "bite":
+        if f == 0:      # wind-up: crouch, jaws part, paws come up
+            p["bob"], p["lunge"], p["mouth"], p["paw"] = 1, -1, "open", 1
+        elif f == 1:    # lunge: head snaps forward, the incisors show
+            p["lunge"], p["mouth"], p["paw"] = 2, "open", 2
+        elif f == 2:    # chomp: the jaws close on the target
+            p["bob"], p["lunge"], p["mouth"], p["paw"] = 1, 1, "chomp", 1
+        else:           # settle: a small white mark where the snap landed
+            p["arc"] = True
+    else:               # hurt
+        if f == 0:      # thrown back: >_< eyes, a scream, two sweat drops
+            p["recoil"], p["bob"] = 2, 1
+            p["eyes"], p["mouth"], p["sweat"] = "hurt", "scream", True
+        else:           # shivering recovery
+            p["tilt"], p["eyes"] = -1, "hurt"
+            p["mouth"], p["sweat"] = "wavy", True
+    return p
+
+
+# ---------------------------------------------------------------------------
+# Shared craft helpers
+# ---------------------------------------------------------------------------
+
+def shade(c, V):
+    """The two-plane lighting pass every view shares."""
+    gc.pk_shade_bottom(c, "brn_deep", V, rows=2)
+    gc.pk_rim(c, "brn_hl", V, protected={ix("brn_deep", V),
+                                         ix("brn_shadow", V)})
+
+
+def eye(c, cx, cy, rx, ry, mode, V):
+    """Every eye goes through gc.pk_eye (white sclera, big pupil, double
+    glint) -- the GBA partner look."""
+    gc.pk_eye(c, cx, cy, rx, ry, mode=mode, variant=V)
+
+
+def draw_kanji(c, ch, ox, oy, V=None):
+    """The forehead brand: pixels inside the fur, drawn after the light
+    passes so shading can never mute it and before the outline, which only
+    ever fills empty pixels and therefore cannot eat it. Drawn in the deep
+    fur tone rather than ink -- a 7x7 pure-black block was a hole punched
+    through the pale female head, where the dark brown reads as a marking
+    that is still unmistakably a glyph."""
+    ink = ix("brn_deep", V)
+    for r, row in enumerate(KANJI[ch]):
+        for k, v in enumerate(row):
+            if v == "X":
+                c.set(ox + k, oy + r, ink)
+
+
+def ear_pair(c, hx, hy, eax, eay, V, spread=8.4, drop=4.7, r=2.35):
+    """Round ears sitting ON TOP of the head outline, with a shadow dot at
+    the root where they meet the fur."""
+    fur = ix("brn_mid", V)
+    shadow = ix("brn_shadow", V)
+    for sgn in (-1, 1):
+        c.blob(hx + sgn * spread + eax, hy - drop + eay, r, r, fur, n=3.5)
+        c.set(int(hx + sgn * spread + eax - sgn * 0.8),
+              int(hy - drop + eay + 1.6), shadow)
+
+
+def feet_front(c, cx, V, footl, footr, spread=4.5):
+    """Two stubby planted feet, 5x4 with rounded corners."""
+    fur = ix("brn_mid", V)
+    deep = ix("brn_deep", V)
+    for sgn, lift in ((-1, footl), (1, footr)):
+        fx = int(cx + sgn * spread) - 2 + (sgn if lift else 0)
+        c.round_rect(fx, 24 - lift, 5, 4, 2, fur)
+        c.hline(fx + 1, fx + 3, 27 - lift, deep)
+
+
+def mouth_front(c, mx, my, kind, V):
+    """Front-facing mouth at the muzzle centre; `open` hangs the two
+    incisors from the top lip -- the soul of a capybara bite."""
+    ink = ix("fur_black")
+    if kind == "closed":
+        c.set(mx - 2, my, ink)
+        c.set(mx - 1, my + 1, ink)
+        c.set(mx + 1, my + 1, ink)
+        c.set(mx + 2, my, ink)
+    elif kind == "open":
+        c.round_rect(mx - 2, my, 5, 3, 1, ink)
+        c.vline(mx - 1, my, my + 1, ix("white"))
+        c.vline(mx + 1, my, my + 1, ix("white"))
+    elif kind == "chomp":
+        c.hline(mx - 2, mx + 2, my, ink)
+        c.set(mx - 1, my + 1, ix("white"))
+        c.set(mx + 1, my + 1, ix("white"))
+    elif kind == "scream":
+        c.round_rect(mx - 2, my - 1, 5, 4, 1, ink)
+        c.vline(mx - 1, my - 1, my, ix("white"))
+        c.vline(mx + 1, my - 1, my, ix("white"))
+        c.set(mx, my + 2, ix("pink_dark"))
+    else:  # wavy shiver
+        for k, dx in enumerate((-2, -1, 0, 1, 2)):
+            c.set(mx + dx, my + (k & 1), ink)
+
+
+def mouth_side(c, mx, my, kind, V):
+    """Side mouth along the bottom edge of the blunt muzzle. Closed stays a
+    soft seam (deep tone, not ink) so the profile does not grow a hole."""
+    ink = ix("fur_black")
+    if kind == "closed":
+        c.hline(mx, mx + 2, my, ix("brn_deep", V))
+    elif kind == "open":
+        c.round_rect(mx, my - 1, 4, 3, 1, ink)
+        c.vline(mx + 1, my - 1, my, ix("white"))
+        c.vline(mx + 2, my - 1, my, ix("white"))
+    elif kind == "chomp":
+        c.hline(mx, mx + 2, my, ink)
+        c.set(mx + 1, my + 1, ix("white"))
+    elif kind == "scream":
+        c.round_rect(mx, my - 2, 4, 4, 1, ink)
+        c.vline(mx + 1, my - 2, my - 1, ix("white"))
+        c.set(mx + 2, my + 1, ix("pink_dark"))
+    else:  # wavy shiver
+        for k, dx in enumerate((0, 1, 2, 3)):
+            c.set(mx + dx, my + (k & 1), ink)
+
+
+def sweat_drops(c, spots):
+    """Two flying sweat drops overhead -- one blue, one pink."""
+    for (x, y), mid, light in spots:
+        c.set(x, y, light)
+        c.rect(x, y + 1, 2, 2, mid)
+
+
+def bite_arc(c, ax, ay):
+    """The little white snap-mark: a sparkle with two arm pixels."""
+    w = ix("white_spark")
+    c.set(ax - 2, ay, w)
+    c.set(ax + 2, ay, w)
+    c.sparkle(ax, ay, 1, "white_spark", core="yellow_light")
+
+
+def flower(c, fx, fy, V):
+    """皮's ear flower: three petal pixels around a light centre. Drawn in
+    the leaf_* ramp so the female remap turns it pink for free."""
+    c.set(fx - 1, fy, ix("leaf_dark", V))
+    c.set(fx + 1, fy, ix("leaf_dark", V))
+    c.set(fx, fy - 1, ix("leaf_mid", V))
+    c.set(fx, fy + 1, ix("leaf_mid", V))
+    c.set(fx, fy, ix("leaf_light", V))
+
+
+# ---------------------------------------------------------------------------
+# Painters, one per stored view (left-facing rows are mirrors of these)
+# ---------------------------------------------------------------------------
+
+def paint_front(c, p, V, ch):
+    """DIR_DOWN: square-on face. The forehead brand lives here."""
+    fur = ix("brn_mid", V)
+    deep = ix("brn_deep", V)
+    belly = ix("brn_belly", V)
+    snout = ix("brn_light", V)
+    ink = ix("fur_black")
+
+    bob, lunge, recoil = p["bob"], p["lunge"], p["recoil"]
+    hdy = lunge - recoil          # from the front, "forward" is down-screen
+    cx = 16 + p["waddle"] + p["tilt"]
+    by = 20.9 + bob
+    hx = cx
+    hy = 9.8 + bob + hdy
+    eax, eay = p["ear"]
+
+    # -- fur base planes ---------------------------------------------------
+    c.blob(cx, by, 7.2, 4.9, fur, n=4.0)                     # compact body
+    c.ellipse(cx, by + 1.6, 4.6, 2.8, belly)                 # belly patch
+    c.blob(hx, hy, 8.6, 6.9, fur, n=4.0)                     # big round head
+    ear_pair(c, hx, hy, eax, eay, V)
+    c.blob(hx, hy + 5.0, 4.9, 2.8, snout, n=3.0)             # blunt muzzle
+    if V:                                                    # 皮's ear flower
+        flower(c, int(hx - 8.0 + eax), int(hy - 6.2 + eay), V)
+    feet_front(c, cx, V, p["footl"], p["footr"])
+
+    # -- the two light planes ----------------------------------------------
+    shade(c, V)
+
+    # -- ink details ---------------------------------------------------------
+    c.hline(int(hx) - 2, int(hx) + 2, int(hy) + 8, deep)      # chin shadow
+    ey = hy + 1.7
+    eye(c, hx - 4.7, ey, 1.9, 2.4, p["eyes"], V)
+    eye(c, hx + 4.7, ey, 1.9, 2.4, p["eyes"], V)
+    c.set(int(hx - 1.6), int(hy + 4.3), ink)                  # nostrils
+    c.set(int(hx + 1.6), int(hy + 4.3), ink)
+    mouth_front(c, int(hx), int(hy + 5.6), p["mouth"], V)
+    for sgn in (-1, 1):                                       # blush
+        bx0 = int(hx) + sgn * 6
+        c.set(bx0, int(hy + 3.6), ix("blush"))
+        c.set(bx0, int(hy + 4.4), ix("blush"))
+    if ch:
+        draw_kanji(c, ch, int(hx) - 3, int(hy) - 6, V)
+    if p["paw"]:                                              # raised paws
+        py = int(by) + 1 - p["paw"]
+        for sgn in (-1, 1):
+            px0 = int(cx) + sgn * 5 - 2 + sgn
+            c.round_rect(px0, py, 4, 3, 1, fur)
+            c.hline(px0 + 1, px0 + 2, py + 2, deep)
+    if p["sweat"]:
+        sweat_drops(c, [
+            ((int(hx) - 11, int(hy) - 4), ix("cyan_mid"), ix("cyan_light")),
+            ((int(hx) + 10, int(hy) - 3), ix("pink_mid"), ix("pink_light")),
+        ])
+    if p["arc"]:
+        bite_arc(c, int(hx), int(hy) + 10)
+
+
+def paint_back(c, p, V):
+    """DIR_UP: the back of the loaf -- round rump, head-back, ears, hind
+    feet and the tiny tail nub between them."""
+    fur = ix("brn_mid", V)
+    deep = ix("brn_deep", V)
+
+    bob, lunge, recoil = p["bob"], p["lunge"], p["recoil"]
+    hdy = lunge - recoil
+    cx = 16 + p["waddle"] + p["tilt"]
+    by = 21.0 + bob
+    hy = 9.8 + bob + hdy
+    eax, eay = p["ear"]
+
+    c.blob(cx, by, 7.8, 5.8, fur, n=4.0)                      # rump
+    c.blob(cx, hy, 8.0, 7.0, fur, n=4.0, squash_top=0.18)     # back of head
+    ear_pair(c, cx, hy, eax, eay, V, spread=7.8, drop=4.6)
+    # tail nub, dead centre -- the one thing a rear view has to say
+    c.circle(cx, by + 4.6, 1.6, deep)
+    c.set(int(cx) - 1, int(by) + 4, ix("brn_mid", V))
+    feet_front(c, cx, V, p["footl"], p["footr"], spread=4.0)
+
+    shade(c, V)
+
+    if p["sweat"]:
+        sweat_drops(c, [
+            ((int(cx) - 10, int(hy) - 6), ix("cyan_mid"), ix("cyan_light")),
+            ((int(cx) + 9, int(hy) - 5), ix("pink_mid"), ix("pink_light")),
+        ])
+    if p["arc"]:
+        bite_arc(c, int(cx), int(hy) - 7)
+
+
+def paint_side(c, p, V):
+    """DIR_RIGHT: the profile. Big round head over a barrel body, one glossy
+    eye, blunt muzzle thrust forward."""
+    fur = ix("brn_mid", V)
+    deep = ix("brn_deep", V)
+    belly = ix("brn_belly", V)
+    snout = ix("brn_light", V)
+
+    bob, lunge, recoil = p["bob"], p["lunge"], p["recoil"]
+    ldx = lunge - recoil
+    ldy = (lunge - recoil) // 2
+    bx = 13.5 + p["tilt"]
+    by = 20.4 + bob
+    hx = 20.8 + ldx + p["tilt"]
+    hy = 10.6 + bob + ldy
+    eax, eay = p["ear"]
+
+    # far legs first: deep tone, antiphase to the near pair
+    c.round_rect(int(14.5 + p["legb"]), 24, 3, 4, 1, deep)
+    c.round_rect(int(7.5 + p["legf"]), 24, 3, 4, 1, deep)
+    c.blob(bx, by, 8.8, 6.2, fur, n=4.2)                      # barrel
+    c.ellipse(bx - 0.5, by + 2.6, 6.4, 2.8, belly)            # belly strip
+    c.blob(hx, hy, 6.6, 6.4, fur, n=4.0)                      # round head
+    c.blob(hx - 4.4, hy - 4.6, 1.3, 1.4, deep, n=3.5)         # far ear
+    c.blob(hx - 2.4 + eax, hy - 5.4 + eay, 2.0, 2.1, fur, n=3.5)
+    c.blob(hx + 5.4, hy + 2.6, 3.3, 2.8, snout, n=3.0)        # blunt muzzle
+    if V:
+        flower(c, int(hx - 2.4 + eax), int(hy - 5.6 + eay), V)
+    # near legs; the front one lifts as the bite reaches
+    paw = 1 if p["paw"] else 0
+    c.round_rect(int(17.5 + p["legf"] + paw), 23 - paw, 4, 5, 2, fur)
+    c.round_rect(int(4.5 + p["legb"]), 23, 4, 5, 2, fur)
+    c.set(int(bx) - 10, int(by) + 0, fur)                     # tail nub
+    c.set(int(bx) - 10, int(by) + 1, fur)
+
+    shade(c, V)
+
+    eye(c, hx + 1.4, hy + 0.6, 1.9, 2.3, p["eyes"], V)
+    c.set(int(hx + 7.4), int(hy + 1.6), ix("fur_black"))      # nostril
+    mouth_side(c, int(hx + 4.4), int(hy + 4.6), p["mouth"], V)
+    c.set(int(hx - 2.4), int(hy + 3.6), ix("blush"))          # cheek blush
+    if p["sweat"]:
+        sweat_drops(c, [
+            ((int(hx) - 7, int(hy) - 8), ix("cyan_mid"), ix("cyan_light")),
+            ((int(hx) + 4, int(hy) - 9), ix("pink_mid"), ix("pink_light")),
+        ])
+    if p["arc"]:
+        bite_arc(c, int(hx) + 7, int(hy) + 6)
+
+
+def paint_diag_front(c, p, V, ch):
+    """DIR_DOWN_RIGHT: three-quarter face -- the near (right) side wins the
+    muzzle and the bigger eye, the brand follows the forehead around."""
+    fur = ix("brn_mid", V)
+    deep = ix("brn_deep", V)
+    belly = ix("brn_belly", V)
+    snout = ix("brn_light", V)
+    ink = ix("fur_black")
+
+    bob, lunge, recoil = p["bob"], p["lunge"], p["recoil"]
+    hdy = lunge - recoil
+    hdx = max(0, lunge) // 2 - max(0, recoil) // 2
+    cx = 15.5 + p["waddle"] + p["tilt"]
+    by = 20.9 + bob
+    hx = 17.4 + hdx + p["tilt"]
+    hy = 9.8 + bob + hdy
+    eax, eay = p["ear"]
+
+    c.blob(cx, by, 7.6, 5.6, fur, n=4.0)
+    c.ellipse(cx + 0.5, by + 1.8, 4.6, 2.8, belly)
+    c.blob(hx, hy, 8.4, 6.9, fur, n=4.0)
+    ear_pair(c, hx, hy, eax, eay, V, spread=6.9, drop=4.7)
+    c.blob(hx + 2.2, hy + 5.0, 4.7, 2.8, snout, n=3.0)         # blunt muzzle
+    if V:
+        flower(c, int(hx - 6.7 + eax), int(hy - 6.0 + eay), V)
+    for sgn, lift, w in ((-1, p["footl"], 4), (1, p["footr"], 5)):
+        fx = int(cx) + sgn * 4 - 2 + (sgn if lift else 0)
+        c.round_rect(fx, 24 - lift, w, 4, 2, fur)
+        c.hline(fx + 1, fx + w - 2, 27 - lift, deep)
+
+    shade(c, V)
+
+    c.hline(int(hx) + 1, int(hx) + 4, int(hy) + 8, deep)       # chin shadow
+    eye(c, hx - 4.6, hy + 1.7, 1.7, 2.1, p["eyes"], V)         # far eye
+    eye(c, hx + 4.8, hy + 1.7, 1.9, 2.4, p["eyes"], V)         # near eye
+    c.set(int(hx + 0.6), int(hy + 4.3), ink)                   # nostrils
+    c.set(int(hx + 3.6), int(hy + 4.3), ink)
+    mouth_front(c, int(hx + 2.2), int(hy + 5.6), p["mouth"], V)
+    c.set(int(hx - 5.6), int(hy + 4.0), ix("blush"))
+    c.set(int(hx + 7.4), int(hy + 3.6), ix("blush"))
+    if ch:
+        draw_kanji(c, ch, int(hx) - 3, int(hy) - 6, V)
+    if p["paw"]:
+        py = int(by) + 1 - p["paw"]
+        for sgn in (-1, 1):
+            px0 = int(cx) + sgn * 5 - 2 + sgn
+            c.round_rect(px0, py, 4, 3, 1, fur)
+            c.hline(px0 + 1, px0 + 2, py + 2, deep)
+    if p["sweat"]:
+        sweat_drops(c, [
+            ((int(hx) - 10, int(hy) - 4), ix("cyan_mid"), ix("cyan_light")),
+            ((int(hx) + 10, int(hy) - 3), ix("pink_mid"), ix("pink_light")),
+        ])
+    if p["arc"]:
+        bite_arc(c, int(hx) + 4, int(hy) + 10)
+
+
+def paint_diag_back(c, p, V):
+    """DIR_UP_RIGHT: three-quarter back -- rump, both ears, and a sliver of
+    cheek to say which way the head is turned."""
+    fur = ix("brn_mid", V)
+    deep = ix("brn_deep", V)
+    snout = ix("brn_light", V)
+
+    bob, lunge, recoil = p["bob"], p["lunge"], p["recoil"]
+    hdy = lunge - recoil
+    cx = 16 + p["waddle"] + p["tilt"]
+    by = 21.0 + bob
+    hx = 17.8 + p["tilt"]
+    hy = 9.8 + bob + hdy
+    eax, eay = p["ear"]
+
+    c.blob(cx, by, 7.8, 5.8, fur, n=4.0)
+    c.blob(hx, hy, 7.8, 7.0, fur, n=4.0, squash_top=0.18)
+    ear_pair(c, hx, hy, eax, eay, V, spread=6.6, drop=4.7)
+    c.ellipse(hx + 5.2, hy + 2.8, 1.8, 2.0, snout)            # cheek sliver
+    c.circle(cx + 1, by + 4.6, 1.6, deep)                     # tail nub
+    for sgn, lift in ((-1, p["footl"]), (1, p["footr"])):
+        fx = int(cx) + sgn * 4 - 2 + (sgn if lift else 0)
+        c.round_rect(fx, 24 - lift, 5, 4, 2, fur)
+        c.hline(fx + 1, fx + 3, 26 - lift, deep)
+
+    shade(c, V)
+
+    if p["sweat"]:
+        sweat_drops(c, [
+            ((int(hx) - 9, int(hy) - 6), ix("cyan_mid"), ix("cyan_light")),
+            ((int(hx) + 9, int(hy) - 5), ix("pink_mid"), ix("pink_light")),
+        ])
+    if p["arc"]:
+        bite_arc(c, int(hx), int(hy) - 7)
+
+
+# ---------------------------------------------------------------------------
+# Sheet assembly
+# ---------------------------------------------------------------------------
+
+PAINTERS = {
+    "down": paint_front,
+    "up": paint_back,
+    "right": paint_side,
+    "down_right": paint_diag_front,
+    "up_right": paint_diag_back,
+}
+
+# Stored direction order == source/game.h DIR_*. The left-facing rows are
+# mirrors of their right-hand twins, which sprites.c relies on.
+DIR_VIEWS = [
+    ("down", False),        # 0 DIR_DOWN
+    ("up", False),          # 1 DIR_UP
+    ("right", True),        # 2 DIR_LEFT   = mirror
+    ("right", False),       # 3 DIR_RIGHT
+    ("down_right", True),   # 4 DIR_DOWN_LEFT = mirror
+    ("down_right", False),  # 5 DIR_DOWN_RIGHT
+    ("up_right", True),     # 6 DIR_UP_LEFT = mirror
+    ("up_right", False),    # 7 DIR_UP_RIGHT
 ]
 
 
-def shade_volume(c, hi, light, dark, deep, shade_set):
-    """Give an already-drawn silhouette a lit top and a shaded underside, in
-    one pass over the pixels.
-
-    This is the single change that stops the capybaras reading as flat
-    stickers. The shapes were always fine -- what was missing is that a body
-    drawn in one fur tone has no direction to it, and at 32x32 there is no room
-    for hand-placed shading across sixteen frames x eight directions. Doing it
-    as a per-column pass over whatever the pose painter produced means a new
-    pose gets correct volume for free.
-
-    Only pixels already in `shade_set` (the fur tones) are considered or
-    written, so the eyes, teeth, sweat drops and the head accessory survive
-    untouched -- they are drawn before this runs and sit inside the silhouette.
-
-    Order within a column, top to bottom:
-      1px highlight rim -> 1px light -> body tone -> 2px dark -> deepest tone
-    """
-    w, h = c.w, c.h
-    src = list(c.px)
-
-    def paintable(x, y):
-        return src[y * w + x] in shade_set
-
-    for x in range(w):
-        col = [y for y in range(h) if paintable(x, y)]
-        if len(col) < 6:
-            continue
-        top, bot = col[0], col[-1]
-        c.set(x, top, hi)
-        if top + 1 <= bot and paintable(x, top + 1):
-            c.set(x, top + 1, light)
-        if paintable(x, bot):
-            c.set(x, bot, deep)
-        for y in (bot - 1, bot - 2):
-            if y > top and paintable(x, y):
-                c.set(x, y, dark)
-
-
-def draw_accessory(c, th, hx, hy, direction):
-    """Small, snug head accessory."""
-    if th["item"] == "yuzu":
-        yx = hx
-        yy = hy - 3
-        c.rect(yx - 2, yy, 4, 3, ix("orange_mid"))
-        c.set(yx - 1, yy + 1, ix("orange_dark"))
-        c.set(yx + 1, yy, ix("yellow_light"))
-        c.set(yx, yy - 1, ix("grn_mid"))
-        c.set(yx + 1, yy - 1, ix("grn_light"))
-    elif th["item"] == "sprout":
-        sx = hx
-        sy = hy - 3
-        c.set(sx, sy + 2, ix("grn_dark"))
-        c.set(sx, sy + 1, ix("grn_mid"))
-        c.set(sx - 1, sy, ix("leaf_light"))
-        c.set(sx + 1, sy, ix("grn_light"))
-
-
-def render_capybara(th, direction, anim, f):
+def render_frame(view, p, V, ch):
     c = Canvas(W, H)
-    out_col = ix(th["outline"])
-    fur_m = ix(th["fur_main"])
-    fur_d = ix(th["fur_dark"])
-    fur_l = ix(th["fur_light"])
-    fur_b = ix(th["fur_belly"])
-    ear_in = ix(th["ear_inner"])
-    eye_c = ix(th["eye_col"])
-    nos_c = ix(th["nostril"])
-    inc_c = ix(th["incisor"])
-
-    # -------------------------------------------------------------------------
-    # 1. RIGHT VIEW (SIDE PROFILE)
-    # -------------------------------------------------------------------------
-    if direction == "right":
-        bob = 0
-        step_f = 0
-        step_b = 0
-        bite_open = False
-        bite_snap = False
-        head_lunge = 0
-
-        if anim == "idle":
-            bob = -1 if f in (1, 2) else 0
-        elif anim == "walk":
-            bobs = [0, -1, 0, 0, -1, 0]
-            bob = bobs[f % 6]
-            steps = [(1, -1), (1, -1), (0, 0), (-1, 1), (-1, 1), (0, 0)]
-            step_f, step_b = steps[f % 6]
-        elif anim == "attack":
-            if f == 0:
-                bob = -1
-                bite_open = True
-                head_lunge = -1
-            elif f in (1, 2):
-                bob = 1
-                bite_snap = True
-                head_lunge = 2
-            elif f == 3:
-                bob = 0
-        if anim == "hurt":
-            if f == 0:
-                bob = -2
-                head_lunge = -2
-            else:
-                bob = 1
-                head_lunge = 0
-
-        by = 10 + bob
-        hy = 10 + bob
-        hx = 15 + head_lunge
-
-        # Subtle far-side paw tips
-        c.rect(8 + step_b, by + 15, 3, 2, fur_d)
-        c.rect(19 + step_f, by + 15, 3, 2, fur_d)
-
-        # Massive round loaf body
-        c.round_rect(2, by + 2, 21, 14, 5, fur_m)
-        c.rect(12, by + 1, 7, 6, fur_m)
-
-        c.rect(4, by + 12, 17, 4, fur_d)
-        c.round_rect(6, by + 10, 12, 4, 1, fur_b)
-        c.hline(5, 16, by + 2, fur_l)
-        c.hline(12, 17, by + 1, fur_l)
-
-        # Tail stub
-        c.set(1, by + 9, fur_d)
-        c.set(1, by + 10, fur_d)
-
-        # Head base + Boxy extended muzzle (jutting out to hx+12)
-        c.round_rect(hx, hy, 10, 8, 2, fur_m)
-        c.rect(hx + 5, hy + 1, 8, 7, fur_m)
-        c.rect(hx + 8, hy + 2, 4, 6, fur_l)
-
-        c.hline(hx + 1, hx + 10, hy, fur_l)
-        c.hline(hx + 4, hx + 12, hy + 8, fur_d)
-
-        ear_twitch = -1 if (anim == "idle" and f == 2) else 0
-        c.rect(hx - 1, hy - 1 + ear_twitch, 2, 3, fur_m)
-        c.set(hx - 1, hy + ear_twitch, ear_in)
-
-        # High front nostril
-        c.rect(hx + 11, hy + 2, 2, 2, nos_c)
-
-        # Eyes: Zen slit eye, NO round white highlights!
-        if anim == "hurt":
-            if f == 0:
-                # Wide panic shocked eye
-                c.rect(hx + 3, hy + 2, 3, 3, ix("white"))
-                c.set(hx + 4, hy + 3, eye_c)
-            else:
-                # Squeezed shut `>` eye
-                c.set(hx + 3, hy + 2, eye_c)
-                c.set(hx + 4, hy + 3, eye_c)
-                c.set(hx + 5, hy + 3, eye_c)
-                c.set(hx + 4, hy + 4, eye_c)
-                c.set(hx + 3, hy + 5, eye_c)
-        elif bite_open:
-            c.hline(hx + 3, hx + 5, hy + 2, eye_c)
-        else:
-            c.hline(hx + 3, hx + 5, hy + 3, eye_c)
-            c.hline(hx + 3, hx + 5, hy + 2, fur_d)
-
-        if anim == "hurt":
-            if f == 0:
-                # Gaping screaming mouth with buckteeth!
-                c.rect(hx + 8, hy + 5, 4, 4, ix("outline"))
-                c.rect(hx + 9, hy + 6, 2, 2, ix("pink_dark"))
-                c.set(hx + 8, hy + 5, inc_c)
-                c.set(hx + 9, hy + 5, inc_c)
-                c.set(hx + 8, hy + 6, ix("yellow_dark"))
-                # Flying panic sweat drops!
-                c.set(hx + 2, hy - 4, ix("cyan_light"))
-                c.rect(hx + 1, hy - 3, 2, 2, ix("cyan_mid"))
-                c.set(hx + 7, hy - 2, ix("cyan_light"))
-            else:
-                # Shivering mouth & tear
-                c.set(hx + 8, hy + 6, eye_c)
-                c.set(hx + 9, hy + 7, eye_c)
-                c.set(hx + 10, hy + 6, eye_c)
-                c.set(hx + 11, hy + 7, eye_c)
-                c.set(hx + 5, hy + 5, ix("cyan_light"))
-                c.set(hx + 5, hy + 6, ix("cyan_mid"))
-        elif bite_open:
-            c.rect(hx + 9, hy + 6, 3, 3, inc_c)
-            c.set(hx + 11, hy + 6, nos_c)
-        elif bite_snap:
-            c.rect(hx + 9, hy + 5, 3, 4, inc_c)
-            c.set(hx + 10, hy + 5, ix(th["incisor_edge"]))
-            c.set(hx + 12, hy + 4, ix("white_spark"))
-            c.set(hx + 13, hy + 4, ix("yellow_light"))
-            c.set(hx + 12, hy + 7, ix("white_spark"))
-            if f == 2:
-                c.set(hx + 14, hy + 6, ix("white_spark"))
-        else:
-            c.hline(hx + 8, hx + 11, hy + 7, fur_d)
-
-        # Unobtrusive stubby paws
-        c.round_rect(16 - step_f, by + 14, 4, 3, 1, fur_m)
-        c.hline(16 - step_f, 18 - step_f, by + 16, fur_l)
-        c.round_rect(5 - step_b, by + 14, 4, 3, 1, fur_m)
-        c.hline(5 - step_b, 7 - step_b, by + 16, fur_l)
-
-        draw_accessory(c, th, hx + 3, hy, "right")
-
-    # -------------------------------------------------------------------------
-    # 2. DOWN VIEW (FRONT / SOUTH)
-    # -------------------------------------------------------------------------
-    elif direction == "down":
-        bob = 0
-        waddle = 0
-        bite_open = False
-        bite_snap = False
-
-        if anim == "idle":
-            bob = -1 if f in (1, 2) else 0
-        elif anim == "walk":
-            waddles = [-1, -1, 0, 1, 1, 0]
-            bobs = [0, -1, 0, 0, -1, 0]
-            waddle = waddles[f % 6]
-            bob = bobs[f % 6]
-        elif anim == "attack":
-            if f == 0:
-                bob = -1
-                bite_open = True
-            elif f in (1, 2):
-                bob = 1
-                bite_snap = True
-            elif f == 3:
-                bob = 0
-        elif anim == "hurt":
-            bob = -2 if f == 0 else 1
-
-        cx = 16 + waddle
-        by = 10 + bob
-        hy = 8 + bob
-
-        # Massive round loaf body
-        c.round_rect(cx - 11, by + 2, 22, 16, 6, fur_m)
-        c.round_rect(cx - 10, by + 12, 20, 6, 4, fur_d)
-        c.round_rect(cx - 7, by + 7, 14, 10, 3, fur_b)
-
-        # Compact head
-        c.round_rect(cx - 7, hy, 14, 9, 2, fur_m)
-        c.hline(cx - 5, cx + 4, hy, fur_l)
-
-        # Ears: small round flaps on top of the head, drawn a size up from a
-        # nub so the head has a readable silhouette against the body.
-        ear_twitch = -1 if (anim == "idle" and f == 2) else 0
-        c.round_rect(cx - 9, hy - 1 + ear_twitch, 4, 4, 1, fur_m)
-        c.set(cx - 8, hy + 1 + ear_twitch, ear_in)
-        c.set(cx - 9, hy + ear_twitch, fur_l)
-        c.round_rect(cx + 5, hy - 1 + ear_twitch, 4, 4, 1, fur_m)
-        c.set(cx + 6, hy + 1 + ear_twitch, ear_in)
-        c.set(cx + 8, hy + ear_twitch, fur_l)
-
-        # Eyes: Zen slit eye, NO round white highlights!
-        if anim == "hurt":
-            if f == 0:
-                # Shocked wide eyes
-                c.rect(cx - 6, hy + 2, 3, 3, ix("white"))
-                c.set(cx - 5, hy + 3, eye_c)
-                c.rect(cx + 3, hy + 2, 3, 3, ix("white"))
-                c.set(cx + 4, hy + 3, eye_c)
-                # Flying sweat drops
-                c.rect(cx - 9, hy - 2, 2, 2, ix("cyan_mid"))
-                c.set(cx - 9, hy - 3, ix("cyan_light"))
-                c.rect(cx + 8, hy - 2, 2, 2, ix("cyan_mid"))
-                c.set(cx + 9, hy - 3, ix("cyan_light"))
-            else:
-                # Squeezed `> <` eyes
-                c.set(cx - 6, hy + 3, eye_c)
-                c.set(cx - 5, hy + 4, eye_c)
-                c.set(cx - 6, hy + 5, eye_c)
-                c.set(cx + 5, hy + 3, eye_c)
-                c.set(cx + 4, hy + 4, eye_c)
-                c.set(cx + 5, hy + 5, eye_c)
-                # Tear drops
-                c.set(cx - 7, hy + 3, ix("cyan_light"))
-                c.set(cx - 7, hy + 4, ix("cyan_mid"))
-                c.set(cx + 6, hy + 3, ix("cyan_light"))
-                c.set(cx + 6, hy + 4, ix("cyan_mid"))
-        elif bite_open:
-            c.hline(cx - 5, cx - 4, hy + 3, eye_c)
-            c.hline(cx + 3, cx + 4, hy + 3, eye_c)
-        else:
-            c.hline(cx - 5, cx - 4, hy + 4, eye_c)
-            c.hline(cx - 5, cx - 4, hy + 3, fur_d)
-            c.hline(cx + 3, cx + 4, hy + 4, eye_c)
-            c.hline(cx + 3, cx + 4, hy + 3, fur_d)
-
-        # Shoulder line: one dark row where the head meets the body. Without it
-        # the front view is a single loaf and the head reads as a bump.
-        c.hline(cx - 7, cx + 6, hy + 9, fur_d)
-        c.set(cx - 8, hy + 9, 0)
-        c.set(cx + 7, hy + 9, 0)
-
-        c.round_rect(cx - 3, hy + 3, 6, 6, 2, fur_l)
-        c.set(cx - 2, hy + 6, nos_c)
-        c.set(cx + 1, hy + 6, nos_c)
-        c.hline(cx - 2, cx + 1, hy + 8, fur_d)
-        # Cheeks: two blush dots, which is what makes the face read as a face
-        # at this size rather than as two dots on a loaf.
-        c.set(cx - 6, hy + 6, ix(th["blush_col"]))
-        c.set(cx - 6, hy + 7, ix(th["blush_col"]))
-        c.set(cx + 5, hy + 6, ix(th["blush_col"]))
-        c.set(cx + 5, hy + 7, ix(th["blush_col"]))
-
-        # Front paws on lower chest
-        c.round_rect(cx - 6, by + 7, 3, 4, 1, fur_m)
-        c.set(cx - 6, by + 10, fur_l)
-        c.round_rect(cx + 3, by + 7, 3, 4, 1, fur_m)
-        c.set(cx + 5, by + 10, fur_l)
-
-        # Unobtrusive stubby foot pads
-        paw_ly = by + 16 + (1 if waddle < 0 else 0)
-        paw_ry = by + 16 + (1 if waddle > 0 else 0)
-        c.rect(cx - 8, paw_ly, 4, 2, fur_m)
-        c.set(cx - 7, paw_ly + 1, fur_l)
-        c.rect(cx + 4, paw_ry, 4, 2, fur_m)
-        c.set(cx + 5, paw_ry + 1, fur_l)
-
-        if anim == "hurt":
-            if f == 0:
-                # Open screaming mouth
-                c.rect(cx - 2, hy + 6, 4, 3, ix("outline"))
-                c.rect(cx - 1, hy + 7, 2, 2, ix("pink_dark"))
-                c.set(cx - 1, hy + 6, inc_c)
-                c.set(cx, hy + 6, inc_c)
-            else:
-                # Shivering flat mouth
-                c.hline(cx - 2, cx + 1, hy + 7, eye_c)
-        elif bite_open:
-            c.rect(cx - 2, hy + 8, 4, 3, inc_c)
-            c.set(cx - 1, hy + 8, ix(th["incisor_edge"]))
-            c.set(cx, hy + 8, ix(th["incisor_edge"]))
-        elif bite_snap:
-            c.rect(cx - 2, hy + 7, 4, 4, inc_c)
-            c.set(cx - 1, hy + 7, ix(th["incisor_edge"]))
-            c.set(cx, hy + 7, ix(th["incisor_edge"]))
-            c.set(cx - 4, hy + 10, ix("white_spark"))
-            c.set(cx + 4, hy + 10, ix("white_spark"))
-            if f == 2:
-                c.set(cx - 5, hy + 9, ix("yellow_light"))
-                c.set(cx + 5, hy + 9, ix("yellow_light"))
-
-        draw_accessory(c, th, cx, hy, "down")
-
-    # -------------------------------------------------------------------------
-    # 3. UP VIEW (BACK / NORTH)
-    # -------------------------------------------------------------------------
-    elif direction == "up":
-        bob = 0
-        waddle = 0
-        if anim == "walk":
-            waddles = [-1, -1, 0, 1, 1, 0]
-            bobs = [0, -1, 0, 0, -1, 0]
-            waddle = waddles[f % 6]
-            bob = bobs[f % 6]
-        elif anim == "hurt":
-            bob = -2 if f == 0 else 1
-
-        cx = 16 + waddle
-        by = 10 + bob
-        hy = 8 + bob
-
-        if anim == "attack":
-            if f == 0:
-                bob = 1
-                by = 10 + bob
-                hy = 8 + bob
-            elif f in (1, 2):
-                bob = -2
-                by = 10 + bob
-                hy = 8 + bob
-                c.rect(cx - 2, hy - 2, 4, 2, inc_c)
-                c.set(cx - 1, hy - 2, ix(th["incisor_edge"]))
-                c.set(cx, hy - 2, ix(th["incisor_edge"]))
-                c.set(cx - 4, hy - 4, ix("white_spark"))
-                c.set(cx + 4, hy - 4, ix("white_spark"))
-                if f == 2:
-                    c.set(cx - 5, hy - 5, ix("yellow_light"))
-                    c.set(cx + 5, hy - 5, ix("yellow_light"))
-            elif f == 3:
-                bob = 0
-                by = 10 + bob
-                hy = 8 + bob
-
-        # Massive round bread-loaf rump
-        c.round_rect(cx - 11, by + 1, 22, 17, 6, fur_m)
-        c.round_rect(cx - 10, by + 12, 20, 6, 4, fur_d)
-        c.round_rect(cx - 7, by + 3, 14, 7, 3, fur_l)
-
-        # Tail stub
-        c.rect(cx - 1, by + 13, 2, 2, fur_d)
-
-        # Compact head back
-        c.round_rect(cx - 7, hy, 14, 7, 2, fur_m)
-        c.hline(cx - 5, cx + 4, hy, fur_l)
-
-        ear_twitch = -1 if (anim == "idle" and f == 2) else 0
-        c.rect(cx - 8, hy + ear_twitch, 2, 3, fur_m)
-        c.rect(cx + 6, hy + ear_twitch, 2, 3, fur_m)
-
-        c.rect(cx - 8, by + 16, 4, 2, fur_d)
-        c.rect(cx + 4, by + 16, 4, 2, fur_d)
-
-        if anim == "hurt":
-            if f == 0:
-                c.set(cx - 6, hy - 3, ix("cyan_light"))
-                c.rect(cx - 7, hy - 2, 2, 2, ix("cyan_mid"))
-                c.set(cx + 6, hy - 3, ix("cyan_light"))
-                c.rect(cx + 5, hy - 2, 2, 2, ix("cyan_mid"))
-            else:
-                c.set(cx - 8, hy + 1, ix("cyan_light"))
-                c.set(cx + 7, hy + 1, ix("cyan_light"))
-
-        draw_accessory(c, th, cx, hy, "up")
-
-
-    # -------------------------------------------------------------------------
-    # 4. DOWN-RIGHT (3/4 FRONT VIEW)
-    # -------------------------------------------------------------------------
-    elif direction == "down_right":
-        bob = 0
-        step_f = 0
-        step_b = 0
-        bite_open = False
-        bite_snap = False
-        head_lunge = 0
-
-        if anim == "idle":
-            bob = -1 if f in (1, 2) else 0
-        elif anim == "walk":
-            bobs = [0, -1, 0, 0, -1, 0]
-            bob = bobs[f % 6]
-            steps = [(1, -1), (1, -1), (0, 0), (-1, 1), (-1, 1), (0, 0)]
-            step_f, step_b = steps[f % 6]
-        elif anim == "attack":
-            if f == 0:
-                bob = -1
-                bite_open = True
-                head_lunge = -1
-            elif f in (1, 2):
-                bob = 1
-                bite_snap = True
-                head_lunge = 2
-            elif f == 3:
-                bob = 0
-        elif anim == "hurt":
-            bob = -2 if f == 0 else 1
-            head_lunge = -2 if f == 0 else 0
-
-        by = 10 + bob
-        hy = 9 + bob
-        hx = 14 + head_lunge
-
-        # Body: 3/4 angled bread loaf
-        c.round_rect(3, by + 2, 21, 15, 5, fur_m)
-        c.rect(13, by + 1, 8, 7, fur_m)
-        c.rect(5, by + 13, 17, 4, fur_d)
-        c.round_rect(7, by + 9, 13, 6, 2, fur_b)
-        c.hline(6, 17, by + 2, fur_l)
-
-        # Tail stub
-        c.set(2, by + 10, fur_d)
-
-        # Head: 3/4 angle
-        c.round_rect(hx - 2, hy, 12, 8, 2, fur_m)
-        c.rect(hx + 4, hy + 2, 6, 6, fur_m)
-        c.rect(hx + 6, hy + 3, 4, 5, fur_l)
-        c.hline(hx, hx + 9, hy, fur_l)
-
-        # Ears: two ears visible in 3/4 view
-        c.rect(hx - 4, hy - 1, 2, 3, fur_m)
-        c.set(hx - 4, hy, ear_in)
-        c.rect(hx + 1, hy - 2, 2, 3, fur_m)
-        c.set(hx + 1, hy - 1, ear_in)
-
-        # High front-right nostril
-        c.rect(hx + 9, hy + 3, 2, 2, nos_c)
-
-        # Eyes: 3/4 perspective (prominent near eye facing camera, serene zen slit)
-        if anim == "hurt":
-            if f == 0:
-                c.rect(hx + 3, hy + 2, 3, 3, ix("white"))
-                c.set(hx + 4, hy + 3, eye_c)
-                # Panic sweat
-                c.set(hx + 1, hy - 4, ix("cyan_light"))
-                c.rect(hx, hy - 3, 2, 2, ix("cyan_mid"))
-            else:
-                c.set(hx + 3, hy + 2, eye_c)
-                c.set(hx + 4, hy + 3, eye_c)
-                c.set(hx + 5, hy + 3, eye_c)
-                c.set(hx + 4, hy + 4, eye_c)
-                c.set(hx + 5, hy + 5, ix("cyan_light"))
-        elif bite_open:
-            c.hline(hx + 3, hx + 5, hy + 2, eye_c)
-        else:
-            c.hline(hx + 3, hx + 5, hy + 3, eye_c)
-            c.hline(hx + 3, hx + 5, hy + 2, fur_d)
-
-        # Mouth / teeth
-        if anim == "hurt":
-            if f == 0:
-                c.rect(hx + 5, hy + 5, 4, 3, ix("outline"))
-                c.rect(hx + 6, hy + 6, 2, 2, ix("pink_dark"))
-                c.set(hx + 5, hy + 5, inc_c)
-                c.set(hx + 6, hy + 5, inc_c)
-            else:
-                c.hline(hx + 5, hx + 8, hy + 6, eye_c)
-        elif bite_open:
-            c.rect(hx + 6, hy + 6, 3, 3, inc_c)
-        elif bite_snap:
-            c.rect(hx + 6, hy + 5, 3, 4, inc_c)
-            c.set(hx + 7, hy + 5, ix(th["incisor_edge"]))
-            c.set(hx + 9, hy + 4, ix("white_spark"))
-        else:
-            c.hline(hx + 5, hx + 8, hy + 7, fur_d)
-
-        # Paws
-        c.round_rect(16 + step_f, by + 14, 4, 3, 1, fur_m)
-        c.hline(16 + step_f, 18 + step_f, by + 16, fur_l)
-        c.round_rect(6 + step_b, by + 14, 4, 3, 1, fur_m)
-        c.hline(6 + step_b, 8 + step_b, by + 16, fur_l)
-
-        draw_accessory(c, th, hx + 1, hy, "right")
-
-    # -------------------------------------------------------------------------
-    # 5. UP-RIGHT (3/4 BACK VIEW)
-    # -------------------------------------------------------------------------
-    elif direction == "up_right":
-        bob = 0
-        waddle = 0
-        step_f = 0
-        step_b = 0
-        if anim == "walk":
-            waddles = [-1, -1, 0, 1, 1, 0]
-            bobs = [0, -1, 0, 0, -1, 0]
-            waddle = waddles[f % 6]
-            bob = bobs[f % 6]
-            steps = [(1, -1), (1, -1), (0, 0), (-1, 1), (-1, 1), (0, 0)]
-            step_f, step_b = steps[f % 6]
-        elif anim == "hurt":
-            bob = -2 if f == 0 else 1
-
-        by = 10 + bob
-        hy = 8 + bob
-        hx = 13
-
-        # 3/4 Back View: chubby rump visible on left, back of head on right
-        c.round_rect(3, by + 1, 21, 16, 5, fur_m)
-        c.rect(13, by + 1, 7, 7, fur_m)
-        c.rect(4, by + 12, 18, 5, fur_d)
-        c.round_rect(5, by + 3, 13, 7, 3, fur_l)
-
-        # Tail stub
-        c.set(2, by + 10, fur_d)
-        c.set(2, by + 11, fur_d)
-
-        # Compact head back (tilted right)
-        c.round_rect(hx, hy, 11, 7, 2, fur_m)
-        c.hline(hx + 1, hx + 9, hy, fur_l)
-
-        # Ears
-        c.rect(hx - 2, hy + 1, 2, 3, fur_m)
-        c.rect(hx + 5, hy - 1, 2, 3, fur_m)
-        c.set(hx + 5, hy, ear_in)
-
-        # Back foot pads
-        c.rect(6 + step_b, by + 15, 4, 2, fur_d)
-        c.rect(16 + step_f, by + 15, 4, 2, fur_d)
-
-        if anim == "hurt":
-            if f == 0:
-                c.set(hx + 3, hy - 3, ix("cyan_light"))
-                c.rect(hx + 2, hy - 2, 2, 2, ix("cyan_mid"))
-            else:
-                c.set(hx + 4, hy + 1, ix("cyan_light"))
-
-        draw_accessory(c, th, hx + 3, hy, "up")
-
-    # -------------------------------------------------------------------------
-    # 6. VOLUME + OUTLINE PASSES
-    #
-    # Volume goes on before the outline: the outline grows outward from
-    # whatever is filled, so lighting the silhouette first means the rim lands
-    # on the shaded shape rather than the other way round.
-    # -------------------------------------------------------------------------
-    fur_tones = {ix(th["fur_main"]), ix(th["fur_light"]), ix(th["fur_dark"]),
-                 ix(th["fur_belly"]), ix(th["snout_col"])}
-    shade_volume(c, ix(th["fur_hi"]), ix(th["fur_light"]),
-                 ix(th["fur_dark"]), ix(th["fur_shadow"]), fur_tones)
-
-    src = list(c.px)
-    for y in range(H):
-        for x in range(W):
-            if src[y * W + x] != 0:
-                continue
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < W and 0 <= ny < H and src[ny * W + nx] != 0:
-                    c.set(x, y, out_col)
-                    break
-
+    if view == "down" or view == "down_right":
+        PAINTERS[view](c, p, V, ch)
+    else:
+        PAINTERS[view](c, p, V)
+    c.auto_outline()
     return c
 
 
-def build_hero_sheet(th):
+def build_sheet(ch, V):
+    """128 canvases in engine order: dir 0..7, each idle4 / walk6 / bite4 /
+    hurt2 (HF_IDLE=0, HF_WALK_A=4, HF_ATTACK=10, HF_HURT=14)."""
     frames = []
     labels = []
-
-    # 0. Down (Dir 0)
-    for anim, count in ANIM_ORDER:
-        for i in range(count):
-            frames.append(render_capybara(th, "down", anim, i))
-            labels.append(f"do.{anim}{i}")
-
-    # 1. Up (Dir 1)
-    for anim, count in ANIM_ORDER:
-        for i in range(count):
-            frames.append(render_capybara(th, "up", anim, i))
-            labels.append(f"up.{anim}{i}")
-
-    # Temporary right frames
-    right_frames = []
-    right_labels = []
-    for anim, count in ANIM_ORDER:
-        for i in range(count):
-            right_frames.append(render_capybara(th, "right", anim, i))
-            right_labels.append(f"ri.{anim}{i}")
-
-    # 2. Left (Dir 2) - Mirrored Right
-    for i in range(FRAMES_PER_DIR):
-        frames.append(right_frames[i].mirrored())
-        labels.append(right_labels[i].replace("ri.", "le.", 1))
-
-    # 3. Right (Dir 3)
-    frames.extend(right_frames)
-    labels.extend(right_labels)
-
-    # Temporary down-right frames
-    dr_frames = []
-    dr_labels = []
-    for anim, count in ANIM_ORDER:
-        for i in range(count):
-            dr_frames.append(render_capybara(th, "down_right", anim, i))
-            dr_labels.append(f"dr.{anim}{i}")
-
-    # 4. Down-Left (Dir 4) - Mirrored Down-Right
-    for i in range(FRAMES_PER_DIR):
-        frames.append(dr_frames[i].mirrored())
-        labels.append(dr_labels[i].replace("dr.", "dl.", 1))
-
-    # 5. Down-Right (Dir 5)
-    frames.extend(dr_frames)
-    labels.extend(dr_labels)
-
-    # Temporary up-right frames
-    ur_frames = []
-    ur_labels = []
-    for anim, count in ANIM_ORDER:
-        for i in range(count):
-            ur_frames.append(render_capybara(th, "up_right", anim, i))
-            ur_labels.append(f"ur.{anim}{i}")
-
-    # 6. Up-Left (Dir 6) - Mirrored Up-Right
-    for i in range(FRAMES_PER_DIR):
-        frames.append(ur_frames[i].mirrored())
-        labels.append(ur_labels[i].replace("ur.", "ul.", 1))
-
-    # 7. Up-Right (Dir 7)
-    frames.extend(ur_frames)
-    labels.extend(ur_labels)
-
+    for d, (view, flip) in enumerate(DIR_VIEWS):
+        for anim, count in ANIM_ORDER:
+            for f in range(count):
+                c = render_frame(view, pose_for(anim, f), V, ch)
+                if flip:
+                    c = c.mirrored()
+                frames.append(c)
+                labels.append(f"d{d}.{anim[:2]}{f}")
     return frames, labels
+
+
+# ---------------------------------------------------------------------------
+# Emission
+# ---------------------------------------------------------------------------
+
+def to_bmp8(c):
+    """8bpp row-major frame bytes."""
+    return bytes(c.px)
+
+
+def check_margins(c, label):
+    """The contract: 1px of empty margin around the ink so auto_outline
+    always has somewhere to grow. The outer ring must hold nothing but
+    empty or outline pixels."""
+    edge = ix("outline")
+    bad = []
+    for x in range(W):
+        for y in (0, H - 1):
+            if c.get(x, y) not in (0, edge):
+                bad.append((x, y))
+    for y in range(H):
+        for x in (0, W - 1):
+            if c.get(x, y) not in (0, edge):
+                bad.append((x, y))
+    if bad:
+        raise AssertionError(
+            f"{label}: ink on the outer ring at {bad[:4]} -- leave a 1px "
+            f"margin for the outline")
 
 
 def main():
@@ -760,46 +612,64 @@ def main():
     gc.emit_palette_header(os.path.join(root, "source", "palette_ids.h"))
 
     total = DIRS * FRAMES_PER_DIR
-    for tag, name, th in HEROES:
-        frames, labels = build_hero_sheet(th)
-        blob = bytearray()
-        for c in frames:
-            blob += c.to_bmp8()
-
-        target_file = os.path.join(out, f"{tag}_tiles.bin")
-        gc.write_bin(target_file, bytes(blob))
-        print(f"{tag} ({name}): {len(frames)} frames, {len(blob)} bytes ({len(blob) // len(frames)} B/frame)")
-
+    sheets = {}
+    for tag, ch, V in HEROES:
+        frames, labels = build_sheet(ch, V)
         assert len(frames) == total, f"{tag} has {len(frames)} frames"
-        assert len(blob) == total * W * H, "frame size mismatch"
+
         for i, c in enumerate(frames):
-            assert c.count_filled() > 50, f"{tag} frame {i} is nearly empty"
+            check_margins(c, f"{tag}#{i}")
+            assert c.count_filled() > 60, f"{tag} frame {i} is nearly empty"
 
-        # Preview of right-facing block
-        base = FRAMES_PER_DIR * 2
+        blob = b"".join(to_bmp8(c) for c in frames)
+        assert len(blob) == total * W * H, "frame size mismatch"
+        target = os.path.join(out, f"{tag}_tiles.bin")
+        gc.write_bin(target, blob)
+        print(f"{tag} ({ch}): {total} frames, {len(blob)} bytes -> {target}")
+        sheets[tag] = (frames, labels)
+
+        # right-facing strip, one row per anim
+        base = FRAMES_PER_DIR * 3
         gc.preview_scale(frames[base:base + FRAMES_PER_DIR],
-                         os.path.join(out, f"preview_{tag}.png"),
-                         scale=4, cols=FRAMES_PER_DIR,
-                         labels=labels[base:base + FRAMES_PER_DIR],
-                         title=f"{tag} ({name}) right: idle/walk/chomp/hurt")
+                         os.path.join(out, f"preview_{tag}.png"), scale=4,
+                         cols=FRAMES_PER_DIR, labels=labels[base:base + 16],
+                         title=f"{tag} ({ch}) right: idle/walk/bite/hurt")
+        # every direction x every frame
+        gc.preview_scale(frames, os.path.join(out, f"preview_{tag}_all.png"),
+                         scale=3, cols=FRAMES_PER_DIR, labels=labels,
+                         title=f"{tag} ({ch}) all 8 directions x 16 frames")
 
-    # Overview contact sheet of both heroes
-    overview = []
-    over_labels = []
-    for tag, name, th in HEROES:
-        frames, _ = build_hero_sheet(th)
-        for d, dname in ((0, "down"), (1, "up"), (2, "left"), (3, "right"), (4, "dn_left"), (5, "dn_right"), (6, "up_left"), (7, "up_right")):
-            overview.append(frames[d * FRAMES_PER_DIR + 0])  # idle
-            overview.append(frames[d * FRAMES_PER_DIR + 1])  # walk step
-            overview.append(frames[d * FRAMES_PER_DIR + 10]) # windup
-            overview.append(frames[d * FRAMES_PER_DIR + 11]) # chomp/bite
-            over_labels.extend([f"{name} {dname} idle", f"{name} {dname} walk",
-                                f"{name} {dname} windup", f"{name} {dname} chomp"])
-
+    # Overview contact sheet: both heroes, every direction, the four frames
+    # a reviewer judges first (breath, contact step, lunge, recoil).
+    overview, over_labels = [], []
+    for tag, ch, _V in HEROES:
+        frames, _ = sheets[tag]
+        for d, dname in enumerate(("down", "up", "left", "right",
+                                   "dn_left", "dn_right", "up_left",
+                                   "up_right")):
+            overview.append(frames[d * FRAMES_PER_DIR + 1])
+            overview.append(frames[d * FRAMES_PER_DIR + 4])
+            overview.append(frames[d * FRAMES_PER_DIR + 11])
+            overview.append(frames[d * FRAMES_PER_DIR + 14])
+            over_labels.extend([f"{ch} {dname} breathe", f"{ch} {dname} step",
+                                f"{ch} {dname} lunge", f"{ch} {dname} hurt"])
     gc.preview_scale(overview, os.path.join(out, "preview_heroes.png"),
                      scale=4, cols=8, labels=over_labels,
-                     title="GBC & Pokémon Style Zen Capybaras: 阿棕 (P1) & 阿奶 (P2)")
-    print("Hero asset generation complete!")
+                     title="Capybara Kingdom heroes: 卡 (P1) & 皮 (P2)")
+
+    # Brand + incisors close-up at 8x for glyph-legibility checks.
+    closeup, close_labels = [], []
+    for tag, ch, _V in HEROES:
+        frames, _ = sheets[tag]
+        closeup.append(frames[0])
+        close_labels.append(f"{ch} idle")
+        closeup.append(frames[11])
+        close_labels.append(f"{ch} bite")
+    gc.preview_scale(closeup, os.path.join(out, "preview_hero_faces.png"),
+                     scale=8, cols=2, labels=close_labels,
+                     title="forehead brand + incisors, 8x")
+
+    print("hero asset generation complete")
 
 
 if __name__ == "__main__":

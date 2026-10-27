@@ -336,6 +336,11 @@ void gfx_circle_outline(int cx, int cy, int r, uint8_t color)
     }
 }
 
+void gfx_hline(int x0, int x1, int y, uint8_t color)
+{
+    gfx_fill_rect(x0, y, x1 - x0 + 1, 1, color);
+}
+
 void gfx_line(int x0, int y0, int x1, int y1, uint8_t color)
 {
     int dx = x1 - x0;

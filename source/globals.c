@@ -35,6 +35,7 @@ uint16_t g_combo = 0;
 uint16_t g_combo_timer = 0;
 uint16_t g_region_kills = 0;
 uint16_t g_duel_hit_pending = 0;
+uint8_t  g_hero_death_beat = 0;
 uint8_t  g_duel_hit_amt = 0;
 bool     g_duel_active = false;
 // Client -> host field damage accumulator (see damage_monster in game.c) and

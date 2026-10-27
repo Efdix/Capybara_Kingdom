@@ -242,5 +242,18 @@
 #define PAL_UI2_AMBER        236
 #define PAL_UI2_VIOLET       237
 #define PAL_UI2_CYAN         238
+#define PAL_DUSK_DEEP        239
+#define PAL_DUSK_INDIGO      240
+#define PAL_DUSK_VIOLET      241
+#define PAL_DUSK_PLUM        242
+#define PAL_HAZE_MAUVE       243
+#define PAL_SUNSET_ROSE      244
+#define PAL_SUNSET_EMBER     245
+#define PAL_SUNSET_GOLD      246
+#define PAL_CLOUD_DUSK       247
+#define PAL_DUSK_GRASS       248
+#define PAL_DUSK_GRASS_DEEP  249
+#define PAL_MAP_BURN         250
+#define PAL_MAP_BURN_DEEP    251
 
-#define PAL_LAST_COLOR 238
+#define PAL_LAST_COLOR 251

@@ -95,9 +95,7 @@ def soil(wet):
     Deliberately NOT drawn as straight lit/shaded rows. The kingdom's boardwalk
     is exactly that -- a flat plank tone with a lit top row and a shadowed gap
     row -- so a bed of parallel furrows in a wood-brown reads as a hole in the
-    decking rather than as soil. This was the first cut's actual bug, and it was
-    obvious the moment the field was on screen next to the plaza: the two were
-    near-indistinguishable.
+    decking rather than as soil.
 
     So the texture here is *unorganised*: scattered clods of different sizes,
     broken furrow strokes rather than continuous lines, and no repeating period
@@ -116,16 +114,14 @@ def soil(wet):
     # Clods on a hash: irregular 1-2 px lumps of both the dark and the light
     # tone, spread so no two rows line up. A hash rather than a fixed list keeps
     # the twenty-four plots of the field from being twenty-four identical tiles.
-    for i in range(30):
+    for i in range(24):
         hx = (i * 7 + 3) % 14 + 1
         hy = (i * 11 + 5) % 14 + 1
         if (i % 3) == 0:
             c.set(hx, hy, dark)
             c.set(hx + 1, hy, dark)
-            c.set(hx, hy + 1, light)
         elif (i % 3) == 1:
             c.set(hx, hy, light)
-            c.set(hx, hy + 1, dark)
         else:
             c.set(hx, hy, dark)
             c.set(hx + 1, hy + 1, light)
@@ -135,7 +131,6 @@ def soil(wet):
     for (fy, x0, x1) in ((5, 2, 8), (5, 11, 15), (11, 4, 13)):
         for x in range(x0, x1):
             c.set(x, fy, dark)
-            c.set(x, fy + 1, light)
 
     # The plot rim: the top and left edges only. Adjacent plots then share one
     # line instead of drawing a double border, which is what makes the bed read
@@ -150,8 +145,6 @@ def soil(wet):
         # version of the same pattern.
         for (ox, oy) in ((4, 4), (11, 9), (2, 13), (9, 2), (14, 6)):
             c.set(ox, oy, WHITE)
-            if (ox + 1) < 16:
-                c.set(ox + 1, oy + 1, light)
 
     return c
 
@@ -176,12 +169,10 @@ def _sprout(c, bud_dark, bud_mid, bud_light):
     c.set(10, 9, LEAF_M); c.set(9, 9, LEAF_M); c.set(9, 10, LEAF_D)
     c.set(6, 8, LEAF_L)
     c.set(10, 8, LEAF_L)
-    # The bud: three pixels, dark rim then the crop's colour.
+    # The bud: a plus of the crop's colour with a lit centre pixel.
     c.set(7, 6, bud_dark)
-    c.set(8, 5, bud_dark)
     c.set(9, 6, bud_dark)
     c.set(8, 6, bud_mid)
-    c.set(8, 5, bud_mid)
     c.set(8, 5, bud_light)
     c.set(7, 15, LEAF_D); c.set(8, 15, SHADOW)
 

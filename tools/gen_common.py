@@ -169,6 +169,28 @@ PALETTE_NAMES = [
     # existing *_dark tones are tuned for sprites on terrain and go muddy
     # against a white panel, so the UI gets its own readable set.
     "ui2_red", "ui2_green", "ui2_amber", "ui2_violet", "ui2_cyan",
+
+    # --- ui v4: title dusk + chart dressing (appended, same reason) --------
+    #
+    # The title screen is a proper sunset scene now, and the old table had no
+    # between-step from `purple_dark` to `orange_mid`: quantising a dusk
+    # gradient through that gap went muddy. These are the missing dusk ramp
+    # (deep indigo -> violet -> plum -> rose -> ember -> gold), the two muted
+    # greens the dusk meadow needs, and two scorched-paper tones for the
+    # expedition chart's burnt edges.
+    "dusk_deep",        # sky top
+    "dusk_indigo",      # sky band 2 / tree + castle silhouette fill
+    "dusk_violet",      # sky band 3 / nearest ridge
+    "dusk_plum",        # sky band 4 / mid ridge + far clouds
+    "haze_mauve",       # far ridge haze against the horizon glow
+    "sunset_rose",      # sky band 5
+    "sunset_ember",     # sky band 6 / backlit rims
+    "sunset_gold",      # horizon band / lit cloud edges / glow mid tone
+    "cloud_dusk",       # darkest silhouette (clouds, hill castle, tree)
+    "dusk_grass",       # meadow at dusk
+    "dusk_grass_deep",  # meadow shadow / foreground grass band
+    "map_burn",         # chart: scorched edge mid tone
+    "map_burn_deep",    # chart: scorched edge darkest
 ]
 
 # Palette v2 -- "sunlit storybook".
@@ -508,7 +530,63 @@ _RGB = {
     "ui2_amber": (194, 126, 26),
     "ui2_violet": (108, 78, 168),
     "ui2_cyan": (36, 130, 158),
+
+    # --- ui v4: title dusk + chart dressing --------------------------------
+    # A dusk ramp with real steps (the old table jumped straight from violet
+    # to orange), two desaturated greens so the meadow sits inside the sunset
+    # instead of shouting over it, and scorched paper for the chart's burnt
+    # edges.
+    "dusk_deep": (44, 24, 66),
+    "dusk_indigo": (68, 38, 90),
+    "dusk_violet": (102, 54, 104),
+    "dusk_plum": (140, 66, 96),
+    "haze_mauve": (172, 100, 112),
+    "sunset_rose": (212, 92, 62),
+    "sunset_ember": (246, 138, 48),
+    "sunset_gold": (255, 214, 120),
+    "cloud_dusk": (36, 24, 52),
+    "dusk_grass": (46, 64, 48),
+    "dusk_grass_deep": (26, 40, 32),
+    "map_burn": (134, 88, 52),
+    "map_burn_deep": (90, 56, 40),
 }
+
+
+# ---------------------------------------------------------------------------
+# Palette v5 -- the Pokemon (GBA) retune.
+#
+# Only RGB values change here, never the ORDER: the palette table is full
+# (252/256 slots) and every name is referenced by generated C code, so new
+# colors are impossible and reordering would silently recolor the game. The
+# retunes below are the ones the Pokemon-style repaint actually needs:
+#
+#   * outline goes near-black and neutral. The old plum (58,34,52) read as a
+#     purple haze around every sprite; GBA Pokemon outlines are crisp dark
+#     gray-browns that sit behind the fill, and the crispness is half of what
+#     makes those sprites read at 32px.
+#   * the fur ramps lose their grey undertone: chestnut mid stops going muddy
+#     against grass.
+# ----------------------------------------------------------------------------
+_RETUNE = {
+    "outline": (46, 38, 46),
+    "outline_soft": (92, 74, 88),
+    "brn_mid2": (180, 120, 62),
+    "brn_hi": (224, 170, 100),
+    "tan_mid2": (240, 194, 126),
+    "tan_hi": (255, 226, 172),
+    "grass_mid": (116, 200, 82),
+    "grass_light": (176, 236, 112),
+    "grn_mid": (72, 172, 78),
+    "grn_light": (136, 220, 100),
+    "leaf_mid": (68, 184, 92),
+    "leaf_light": (140, 230, 110),
+    "sea_deep": (32, 96, 176),
+    "sea_mid": (56, 152, 220),
+    "sea_light": (116, 208, 248),
+    "murk_light": (124, 152, 104),
+}
+for _n, _v in _RETUNE.items():
+    _RGB[_n] = _v
 
 
 def build_index():
@@ -745,6 +823,111 @@ class Canvas:
     def count_filled(self):
         return sum(1 for v in self.px if v)
 
+    # --- craft layer ------------------------------------------------------
+    # The shared vocabulary every painter builds on. These exist so a dozen
+    # independent scripts light their subjects the same way: a 1px dark
+    # outline (auto_outline), a bottom-of-form cel shadow, a top-left rim
+    # light, eyes that carry a specular dot, and dithered gradients for the
+    # places real art would airbrush. Consistency across painters is what
+    # makes 25 independently drawn creatures read as one game.
+
+    def dither_rect(self, x, y, w, h, color, parity=0):
+        """Checker dither fill: 50% coverage of `color` over what is there.
+
+        The cheapest honest gradient a no-alpha canvas can do. Stacking two
+        of these at different radii with different parities gives the soft
+        radial falloff a glow needs.
+        """
+        col = ix(color) if isinstance(color, str) else color
+        for j in range(y, y + h):
+            for i in range(x, x + w):
+                if ((i + j) & 1) == parity:
+                    self.set(i, j, col)
+
+    def dither_ellipse(self, cx, cy, rx, ry, color, parity=0):
+        """Checker-dithered ellipse -- the dither_rect of round shapes."""
+        col = ix(color) if isinstance(color, str) else color
+        if rx <= 0 or ry <= 0:
+            return
+        for j in range(int(cy - ry), int(cy + ry) + 1):
+            for i in range(int(cx - rx), int(cx + rx) + 1):
+                dx = (i - cx + 0.5) / rx
+                dy = (j - cy + 0.5) / ry
+                if dx * dx + dy * dy <= 1.0 and ((i + j) & 1) == parity:
+                    self.set(i, j, col)
+
+    def grad_ellipse(self, cx, cy, rx, ry, colors):
+        """A radial gradient out of 2-4 tones, dithered at the seams.
+
+        colors runs core -> edge. Each ring is solid out to its radius, then
+        dithered across the band to the next tone, which is exactly how the
+        eye reads 'glow' at 8bpp with no alpha.
+        """
+        n = len(colors)
+        for k, name in enumerate(colors):
+            rk = rx * (1.0 - k / n)
+            ryk = ry * (1.0 - k / n)
+            if k == 0:
+                self.ellipse(cx, cy, rk, ryk, ix(name))
+            else:
+                self.dither_ellipse(cx, cy, rk, ryk, ix(name),
+                                    parity=(k + int(cx) + int(cy)) & 1)
+
+    def rim_light(self, color_name="white", variant=None):
+        """Light the top-left silhouette edge, one pixel, in place.
+
+        Replaces the first interior pixel that touches empty space from
+        above or from the left -- the two sides the scene's key light comes
+        from. Skips pixels that are already the outline colour, so it never
+        eats a deliberate dark edge.
+        """
+        col = ix(color_name, variant)
+        edge = ix("outline", variant)
+        src = list(self.px)
+        for y in range(self.h):
+            for x in range(self.w):
+                if src[y * self.w + x] in (0, edge):
+                    continue
+                up = y > 0 and src[(y - 1) * self.w + x] == 0
+                left = x > 0 and src[y * self.w + x - 1] == 0
+                if up or left:
+                    self.set(x, y, col)
+
+    def cel_shade(self, color_name, variant=None, rows=2):
+        """Darken the bottom `rows` pixels of every filled column.
+
+        This is the shadow half of the two-plane lighting the prop and
+        creature painters share: a top-lit form needs its underside to fall
+        away or the shape reads as a sticker.
+        """
+        col = ix(color_name, variant)
+        for x in range(self.w):
+            filled = [y for y in range(self.h) if self.get(x, y) != 0]
+            if not filled:
+                continue
+            for y in filled[-rows:]:
+                if self.get(x, y) != 0:
+                    self.set(x, y, col)
+
+    def sparkle(self, cx, cy, r, color, core=None):
+        """A four-point star: the one 'magic' mark every FX reuses.
+
+        Cross arms of length r, diagonal dots at half r, and a bright core
+        pixel. Used at r=2 on pickups and r=4 on ultimates.
+        """
+        col = ix(color) if isinstance(color, str) else color
+        cc = ix(core) if isinstance(core, str) else core
+        self.vline(cx, cy - r, cy + r, col)
+        self.hline(cx - r, cx + r, cy, col)
+        if r >= 3:
+            for d in (1, r - 1):
+                self.set(cx + d, cy + d, col)
+                self.set(cx - d, cy + d, col)
+                self.set(cx + d, cy - d, col)
+                self.set(cx - d, cy - d, col)
+        if cc is not None:
+            self.set(cx, cy, cc)
+
     # --- NDS emission ---------------------------------------------------
     def to_tiles(self):
         """NDS 8bpp tiles: 8x8 blocks, left-to-right then top-to-bottom."""
@@ -762,8 +945,152 @@ class Canvas:
                      for y in range(self.h) for x in range(self.w))
 
 
+def paint_eye(c, cx, cy, rx, ry, iris="black", sclera=None, spec="white",
+              lid=None, variant=None):
+    """One eye, drawn the same way on every creature in the game.
+
+    A sclera disc (when asked), an iris that fills most of it, a black pupil
+    when the iris is a colour rather than black, and -- the part that makes
+    the difference between 'mark' and 'alive' -- a single white specular dot
+    fixed to the upper-left of the pupil. `lid` draws a heavy upper edge for
+    angry creatures; `iris="black"` skips the pupil step entirely.
+    """
+    if sclera:
+        c.ellipse(cx, cy, rx + 0.6, ry + 0.6, ix("outline", variant))
+        c.ellipse(cx, cy, rx, ry, ix(sclera, variant))
+    if iris == "black":
+        c.ellipse(cx, cy, rx * 0.7, ry * 0.7, ix("black"))
+    else:
+        c.ellipse(cx, cy, rx * 0.9, ry * 0.9, ix(iris, variant))
+        c.ellipse(cx + 0.4, cy + 0.3, rx * 0.45, ry * 0.45, ix("black"))
+    if spec:
+        c.set(int(cx - rx * 0.4), int(cy - ry * 0.5), ix(spec, variant))
+    if lid:
+        c.hline(int(cx - rx), int(cx + rx * 0.6), int(cy - ry),
+                ix(lid, variant))
+
+
 def new_canvas(w, h):
     return Canvas(w, h)
+
+
+# ---------------------------------------------------------------------------
+# Pokemon-style vocabulary (palette v5 painters)
+#
+# The GBA Pokemon look rests on four habits the old storybook painters did
+# not have:
+#
+#   1. chibi proportions -- the head is the widest shape on the sprite, and
+#      the head/body silhouette break is visible from the front;
+#   2. big glossy eyes -- an eye is a *feature* (sclera, pupil, two glints),
+#      not a dot; a creature reads as alive through its eyes first;
+#   3. hard-edged two-plane shading -- the shadow is a shape with a contour,
+#      not a gradient;
+#   4. a crisp near-black outline hugging a convex silhouette.
+#
+# pk_eye(), pk_shade_bottom() and pk_rim() below are how the repainted hero,
+# monster and world painters all keep to those habits without copying each
+# other's code.
+# ---------------------------------------------------------------------------
+
+def pk_eye(c, cx, cy, rx, ry, mode="open", iris=None, variant=None,
+           sclera="white"):
+    """One Pokemon eye. mode: open | blink | hurt.
+
+    Open is a sclera disc, a pupil that fills most of it (a dark pupil on
+    white, or a pupil inside a coloured iris), a big square glint at the
+    upper-left and a small one at the lower-right -- the double shine that
+    makes GBA sprites glossy. Blink draws a closed lid; hurt draws >_<.
+    """
+    ink = ix("fur_black")
+    cx, cy = int(round(cx)), int(round(cy))
+    if mode == "open" and rx <= 1.5:
+        # Too small for sclera+iris detail: a bead pupil with one glint is
+        # all that survives at this scale (GBA tiny sprites do the same).
+        c.circle(cx, cy, rx + 0.4, ink)
+        c.set(int(cx - rx * 0.4), int(cy - ry * 0.5),
+              ix("white", variant))
+        return
+    if mode == "blink":
+        c.hline(cx - int(rx) - 1, cx + int(rx) + 1, cy, ink)
+        c.set(cx, cy + 1, ink)
+        return
+    if mode == "hurt":
+        sgn = 1 if cx < c.w // 2 else -1
+        for k, dx in enumerate((-1, 0, 1)):
+            c.set(cx + sgn * (1 - abs(dx)), cy - 1 + k, ink)
+        return
+    if sclera:
+        c.ellipse(cx, cy, rx + 0.7, ry + 0.7, ix("outline", variant))
+        c.ellipse(cx, cy, rx + 0.2, ry + 0.2, ix(sclera, variant))
+    if iris:
+        c.ellipse(cx, cy, rx * 0.95, ry * 0.95, ix(iris, variant))
+        c.ellipse(cx + 0.3, cy + 0.4, rx * 0.5, ry * 0.55, ink)
+    else:
+        c.ellipse(cx + 0.2, cy + 0.3, rx * 0.62, ry * 0.66, ink)
+    if sclera or iris:
+        c.set(int(cx - rx * 0.4), int(cy - ry * 0.45), ix("white", variant))
+        c.set(int(cx + rx * 0.5), int(cy + ry * 0.35), ix("white", variant))
+
+
+def pk_shade_bottom(c, color_name, variant=None, rows=2):
+    """The shadow plane: darken the bottom `rows` filled pixels of each column.
+
+    Same mechanism as Canvas.cel_shade but it *stops at interior columns*:
+    a column whose filled run is only 1-2 px tall (thin limbs, ear tips) is
+    left alone, so spindly details do not vanish into the shadow tone.
+    """
+    col = ix(color_name, variant)
+    for x in range(c.w):
+        filled = [y for y in range(c.h) if c.get(x, y) != 0]
+        if len(filled) <= rows + 1:
+            continue
+        for y in filled[-rows:]:
+            c.set(x, y, col)
+
+
+def pk_shade_side(c, color_name, variant=None, cols=1):
+    """Shade the right-hand interior edge (the side away from the key light).
+
+    One pass over filled pixels whose right neighbour is empty or shaded:
+    this is what turns a flat fill into a lit form without a gradient.
+    """
+    col = ix(color_name, variant)
+    edge = ix("outline", variant)
+    src = list(c.px)
+    for y in range(c.h):
+        for x in range(c.w):
+            v = src[y * c.w + x]
+            if v in (0, col, edge):
+                continue
+            nx = x + cols
+            if nx >= c.w or src[y * c.w + nx] == 0:
+                c.set(x, y, col)
+
+
+def pk_rim(c, color_name, variant=None, protected=()):
+    """Light the top-left interior silhouette edge, one pixel.
+
+    Like Canvas.rim_light but with a skip-set (far limbs painted in the deep
+    tone stay dark) and an optional skip of the outline colour.
+    """
+    col = ix(color_name, variant)
+    edge = ix("outline", variant)
+    src = list(c.px)
+    for y in range(c.h):
+        for x in range(c.w):
+            v = src[y * c.w + x]
+            if v == 0 or v in protected or v == col:
+                continue
+            up = y > 0 and src[(y - 1) * c.w + x] == 0
+            left = x > 0 and src[y * c.w + x - 1] == 0
+            if up or left:
+                c.set(x, y, col)
+
+
+def pk_outline_grow(c, color_name="outline", variant=None):
+    """auto_outline, spelled for the new painters."""
+    c.auto_outline(color_name, variant)
 
 
 # ---------------------------------------------------------------------------

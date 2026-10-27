@@ -55,7 +55,7 @@ NITROFSDIR	:=
 PYTHON		:= /d/Science/Miniforge/envs/Blocksds/python.exe
 TOOLS		:= tools/gen_common.py tools/gen_heroes.py tools/gen_world.py \
 		   tools/gen_cards.py tools/gen_font.py tools/gen_audio.py \
-		   tools/gen_ui.py tools/gen_farm.py
+		   tools/gen_ui.py tools/gen_farm.py tools/gen_monsters.py
 
 # Integrity checks for the generated assets: file sizes against the geometry
 # the C code assumes, palette indices in range, collision maps that match their

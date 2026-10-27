@@ -560,6 +560,24 @@ void spawn_gem(uint8_t kind, int32_t x, int32_t y, uint16_t value)
         g->bob = (uint8_t)(my_rand() & 15);
         return;
     }
+
+    // Pool full: recycle an experience mote rather than dropping the newest
+    // thing on the floor. A wave's worst moment used to silently eat exactly
+    // the drops the player was walking toward; seeds, hearts and tokens are
+    // never the ones recycled.
+    for (int i = 0; i < MAX_GEMS; i++)
+    {
+        Gem *g = &g_gems[i];
+        if (g->kind == 0)
+        {
+            g->kind = kind;
+            g->x = x;
+            g->y = y;
+            g->value = value;
+            g->bob = (uint8_t)(my_rand() & 15);
+            return;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1572,7 +1590,7 @@ void hero_take_damage(int index, int damage, int from_x, int from_y)
     // 厚皮 Lv3: the capybara is too thick to be staggered. It still takes the
     // heart, but it keeps its feet -- which in a duel is the difference between
     // losing one heart and losing the exchange.
-    h->hurt_stun = card_unlocked(h, CARD_HIDE) ? 0 : 16;
+    h->hurt_stun = card_unlocked(h, CARD_HIDE) ? 0 : 10;
     audio_play_sfx(SND_HURT);
 
     // 受击反馈：屏幕轻微震动 + 头顶惊慌受击汗滴特效
@@ -1594,25 +1612,15 @@ void hero_take_damage(int index, int damage, int from_x, int from_y)
     }
     spawn_effect(FX_HIT, cx, cy - 8, 14, 10);
 
-    // 击退受力反馈
-    int dx = (cx > from_x) ? 12 : -12;
-    int dy = (cy > from_y) ? 12 : -12;
+    // 击退受力反馈: a decaying shove applied over the next few frames (see
+    // hero_update), so the hit pushes instead of teleporting.
+    int dx = (cx > from_x) ? 4 : -4;
+    int dy = (cy > from_y) ? 4 : -4;
     if (iabs(cx - from_x) < 8) dx = 0;
     if (iabs(cy - from_y) < 8) dy = 0;
-    if (g_duel_active)
-    {
-        // The arena has no tile map to slide against; the knockback is a
-        // shove along the ground, clamped to the arena walls.
-        h->x += dx;
-        int32_t ncx = h->x + HERO_SPRITE_W / 2;
-        if (ncx < DUEL_X_MIN) h->x = DUEL_X_MIN - HERO_SPRITE_W / 2;
-        if (ncx > DUEL_X_MAX) h->x = DUEL_X_MAX - HERO_SPRITE_W / 2;
-    }
-    else if (hero_hitbox_ok(h, h->x + dx, h->y + dy))
-    {
-        h->x += dx;
-        h->y += dy;
-    }
+    h->kb_vx = (int8_t)dx;
+    h->kb_vy = (int8_t)dy;
+    h->kb_timer = 6;
 
     // In a linked duel the partner's capybara is simulated over there; flag
     // the hit so the client can play its own hurt reaction (net.c carries it).
@@ -1634,7 +1642,7 @@ void hero_take_damage(int index, int damage, int from_x, int from_y)
         }
     }
 
-    if (h->hearts == 0 && index == g_local_hero)
+    if (h->hearts == 0 && index == g_local_hero && g_hero_death_beat == 0)
     {
         // Soft failure, kept from the original design: going down ends the run
         // but never the game. Ingredients already secured stay secured, so a
@@ -1646,9 +1654,17 @@ void hero_take_damage(int index, int damage, int from_x, int from_y)
         // of re-farming the meter it already paid for.
         if (g_duel_active)
             g_duel_pending = (int8_t)g_region_id;
+        // The fall is an event, not a screen swap: the world holds for a beat
+        // while the defeat burst plays out under the frozen hero, and only
+        // then does the game-over plate arrive (the countdown lives with the
+        // field and duel updates).
+        g_hero_death_beat = 55;
+        h->hurt_stun = 55;
+        h->invuln = 70;
+        spawn_effect(FX_KILL, cx, cy, 30, 16);
+        g_screen_shake = 8;
         audio_stop_music();
         audio_play_sfx(SND_EXPLOSION);
-        g_state = ST_GAME_OVER;
     }
 }
 
@@ -3273,6 +3289,35 @@ static void fire_card(int index, int card_id)
 // Capybara update
 // ---------------------------------------------------------------------------
 
+// Start a roll if one is possible right now: on the ground, or once per jump
+// in the air, with the cooldown clear. The direction follows the held keys
+// first and the facing second, so kiting away from a boss rolls backwards
+// without a wasted turn. Returns true when the roll started.
+static bool duel_start_roll(Hero *h, uint16_t keys)
+{
+    if (h->roll_cd > 0)
+        return false;
+    if (h->jump_vy != 0 && h->roll_air)
+        return false;
+
+    int8_t dir = 0;
+    if (keys & KEY_LEFT)  dir = -1;
+    if (keys & KEY_RIGHT) dir = 1;
+    if (dir == 0)
+        dir = (h->facing == DIR_LEFT) ? -1 : 1;
+
+    h->roll_timer = DUEL_ROLL_FRAMES;
+    h->roll_cd = DUEL_ROLL_CD;
+    h->roll_dir = dir;
+    if (h->jump_vy != 0)
+        h->roll_air = true;
+    if (h->invuln < DUEL_ROLL_INVULN)
+        h->invuln = DUEL_ROLL_INVULN;
+    audio_play_sfx(SND_UI_MOVE);
+    spawn_effect(FX_RAM_DUST, h->x + 16, h->y + 28, 10, 8);
+    return true;
+}
+
 static void hero_update(int index)
 {
     Hero *h = &g_heroes[index];
@@ -3428,15 +3473,22 @@ static void hero_update(int index)
             }
 
             // Jump. Edge-triggered (button or tap) so holding it doesn't
-            // turn the capybara into a pogo stick.
+            // turn the capybara into a pogo stick. A press while airborne is
+            // banked for a few frames: a jump that lands inside that window
+            // chains straight into the next hop instead of eating the press.
             bool jump_pressed = (down & KEY_A) != 0 ||
                                 (input_touch_pressed() &&
                                  input_touch_in(DUEL_BTN_JUMP_X, DUEL_BTN_JUMP_Y,
                                                 DUEL_BTN_JUMP_W, DUEL_BTN_JUMP_H));
-            if (jump_pressed && h->jump_vy == 0)
+            if (jump_pressed)
             {
-                h->jump_vy = DUEL_JUMP_VY;
-                audio_play_sfx(SND_ATTACK);
+                if (h->jump_vy == 0)
+                {
+                    h->jump_vy = DUEL_JUMP_VY;
+                    audio_play_sfx(SND_ATTACK);
+                }
+                else
+                    h->jump_buffer = 7;
             }
             // Variable jump height: releasing early cuts the arc.
             bool jump_held = (keys & KEY_A) != 0 ||
@@ -3446,28 +3498,45 @@ static void hero_update(int index)
                 h->jump_vy = -4;
 
             // Roll. Ground roll always; air roll once per jump. Edge and
-            // tap triggered, like the jump.
+            // tap triggered, like the jump; a press that cannot start one
+            // (cooldown, air roll spent) is banked briefly so a roll fired
+            // the frame the cooldown ends is still the player's intent.
             bool roll_pressed = (down & KEY_B) != 0 ||
                                 (input_touch_pressed() &&
                                  input_touch_in(DUEL_BTN_ROLL_X, DUEL_BTN_ROLL_Y,
                                                 DUEL_BTN_ROLL_W, DUEL_BTN_ROLL_H));
-            if (roll_pressed && h->roll_cd == 0 &&
-                (h->jump_vy == 0 || !h->roll_air))
+            if (roll_pressed)
             {
-                h->roll_timer = DUEL_ROLL_FRAMES;
-                h->roll_cd = DUEL_ROLL_CD;
-                h->roll_dir = (h->facing == DIR_LEFT) ? -1 : 1;
-                if (h->jump_vy != 0)
-                    h->roll_air = true;
-                if (h->invuln < DUEL_ROLL_INVULN)
-                    h->invuln = DUEL_ROLL_INVULN;
-                audio_play_sfx(SND_UI_MOVE);
-                spawn_effect(FX_RAM_DUST, h->x + 16, h->y + 28, 10, 8);
+                if (!duel_start_roll(h, keys))
+                    h->roll_buffer = 8;
             }
         }
 
+        if (h->jump_buffer > 0)
+            h->jump_buffer--;
+        if (h->roll_buffer > 0)
+            h->roll_buffer--;
         if (h->roll_cd > 0)
+        {
             h->roll_cd--;
+            if (h->roll_cd == 0 && h->roll_buffer > 0)
+            {
+                h->roll_buffer = 0;
+                duel_start_roll(h, input_held());
+            }
+        }
+
+        // Knockback rides the same arena: a horizontal shove that decays,
+        // clamped by the walls like every other x step.
+        if (h->kb_timer > 0)
+        {
+            h->kb_timer--;
+            if (h->kb_vx != 0)
+            {
+                h->x += h->kb_vx;
+                h->kb_vx += (h->kb_vx < 0) - (h->kb_vx > 0);
+            }
+        }
 
         // Vertical arc. jump_vy counts in half-pixels so the arc is smooth at
         // DS frame rates without fixed-point books everywhere.
@@ -3489,6 +3558,14 @@ static void hero_update(int index)
                 h->jump_vy = 0;
                 h->roll_air = false;
                 spawn_effect(FX_RAM_DUST, h->x + 16, h->y + 28, 8, 6);
+                // A jump pressed just before touchdown fires on the landing
+                // frame: the buffer exists so the arc reads as continuous.
+                if (h->jump_buffer > 0)
+                {
+                    h->jump_buffer = 0;
+                    h->jump_vy = DUEL_JUMP_VY;
+                    audio_play_sfx(SND_ATTACK);
+                }
             }
         }
 
@@ -3511,6 +3588,28 @@ static void hero_update(int index)
             if (cx3 > DUEL_X_MAX) h->x = DUEL_X_MAX - HERO_SPRITE_W / 2;
         }
         return;
+    }
+
+    // Knockback as a decaying velocity rather than a one-frame teleport: the
+    // shove plays out over a few frames while the player is already steering
+    // again, which is what makes a hit read as a push instead of a skip.
+    if (h->kb_timer > 0 && !h->remote)
+    {
+        h->kb_timer--;
+        if (h->kb_vx != 0)
+        {
+            int nx = h->x + h->kb_vx;
+            if (hero_hitbox_ok(h, nx, h->y))
+                h->x = nx;
+            h->kb_vx += (h->kb_vx < 0) - (h->kb_vx > 0);
+        }
+        if (h->kb_vy != 0)
+        {
+            int ny = h->y + h->kb_vy;
+            if (hero_hitbox_ok(h, h->x, ny))
+                h->y = ny;
+            h->kb_vy += (h->kb_vy < 0) - (h->kb_vy > 0);
+        }
     }
 
     // The charge (冲撞) overrides walking while it lasts.
@@ -3581,20 +3680,40 @@ static void hero_update(int index)
         else if (dy < 0)           h->facing = DIR_UP;
         else if (dy > 0)           h->facing = DIR_DOWN;
 
-        int speed = h->move_speed;
+        // Subpixel movement. A diagonal step is scaled by 1/sqrt(2), held in
+        // 1/256-pixel remainders so the truncation never shows as a stutter:
+        // over frames the capybara covers exactly 70.7% of the cardinal
+        // distance, where the old integer path covered a full 141%.
+        int step_x = dx * (int)h->move_speed * 256;
+        int step_y = dy * (int)h->move_speed * 256;
+        if (dx != 0 && dy != 0)
+        {
+            step_x = step_x * 181 / 256;
+            step_y = step_y * 181 / 256;
+        }
+        h->sub_x = (int16_t)(h->sub_x + step_x);
+        h->sub_y = (int16_t)(h->sub_y + step_y);
+        int mx = h->sub_x >> 8;
+        int my = h->sub_y >> 8;
+        h->sub_x = (int16_t)(h->sub_x & 0xFF);
+        h->sub_y = (int16_t)(h->sub_y & 0xFF);
 
         // Axis-separated movement so sliding along walls feels right.
-        if (dx != 0)
+        if (mx != 0)
         {
-            int nx = h->x + dx * speed;
+            int nx = h->x + mx;
             if (hero_hitbox_ok(h, nx, h->y))
                 h->x = nx;
+            else
+                h->sub_x = 0;   // pressed against the wall: spend the remainder
         }
-        if (dy != 0)
+        if (my != 0)
         {
-            int ny = h->y + dy * speed;
+            int ny = h->y + my;
             if (hero_hitbox_ok(h, h->x, ny))
                 h->y = ny;
+            else
+                h->sub_y = 0;
         }
 
         h->moving = (dx != 0 || dy != 0);
@@ -6671,6 +6790,10 @@ void duel_update(void)
 {
     g_frame++;
     g_run_time++;
+    // The defeat beat runs here too: a duel loss holds the arena for its
+    // moment before the game-over plate arrives.
+    if (g_hero_death_beat > 0 && --g_hero_death_beat == 0)
+        g_state = ST_GAME_OVER;
     if (g_toast.life > 0)
         g_toast.life--;
     render_camera(0, 0);
@@ -7362,16 +7485,22 @@ static void duel_draw(Monster *b)
                  ? "霸主倒下了！" : "先锋被击溃！", PAL_UI_GOLD_LIGHT);
     }
 
-    // Low-health edge: the whole screen frame pulses when one hit from
-    // losing. Cheap, unmissable, and it sits over both HUDs.
+    // Low-health edge: the whole screen frame pulses from a quarter health
+    // down, hotter inside the last heart. Cheap, unmissable, and it sits over
+    // both HUDs.
     Hero *h = &g_heroes[g_local_hero];
-    if (h->active && h->hearts <= 1 && g_duel.dying == 0 && ((g_frame >> 3) & 1))
+    if (h->active && h->hearts_max > 0 && g_duel.dying == 0)
     {
-        uint8_t c = PAL_RED_LIGHT;
-        gfx_fill_rect(0, 0, AREA_W, 2, c);
-        gfx_fill_rect(0, AREA_H - 2, AREA_W, 2, c);
-        gfx_fill_rect(0, 0, 2, AREA_H, c);
-        gfx_fill_rect(AREA_W - 2, 0, 2, AREA_H, c);
+        bool quarter = h->hearts * 4 <= h->hearts_max;
+        bool last = h->hearts <= 1;
+        if (quarter && ((g_frame >> (last ? 2 : 3)) & 1))
+        {
+            uint8_t c = last ? PAL_RED_LIGHT : PAL_RED_DARK;
+            gfx_fill_rect(0, 0, AREA_W, 2, c);
+            gfx_fill_rect(0, AREA_H - 2, AREA_W, 2, c);
+            gfx_fill_rect(0, 0, 2, AREA_H, c);
+            gfx_fill_rect(AREA_W - 2, 0, 2, AREA_H, c);
+        }
     }
 }
 
@@ -8156,6 +8285,11 @@ void game_update(void)
     g_frame++;
     g_run_time++;
 
+    // The defeat beat: the world keeps breathing while the fallen capybara's
+    // burst plays, and the plate arrives only when it is done.
+    if (g_hero_death_beat > 0 && --g_hero_death_beat == 0)
+        g_state = ST_GAME_OVER;
+
     // A minute and a half in is when the surprise peaks for someone who has
     // never played a survivors game: things keep coming and nothing they
     // press makes the capybara bite harder. One sentence, once, at that
@@ -8251,18 +8385,21 @@ void game_update(void)
 
     // --- camera ---
     // Follow the local character, softened so the view does not jitter on a
-    // single-frame twitch. The camera is centred on the player and then
-    // clamped to the world by render_camera(), which is also what keeps the
-    // viewport from showing anything outside the map.
+    // single-frame twitch, and lead slightly toward where it faces so the
+    // space it is walking into is the space on screen.
     if (g_heroes[g_local_hero].active)
     {
+        static const int8_t lead_dx[DIRS_COUNT] = { 0, 0, -1, 1, -1, 1, -1, 1 };
+        static const int8_t lead_dy[DIRS_COUNT] = { 1, -1, 0, 0, 1, 1, -1, -1 };
+        Hero *ch = &g_heroes[g_local_hero];
         int32_t hx, hy;
-        hero_center(&g_heroes[g_local_hero], &hx, &hy);
+        hero_center(ch, &hx, &hy);
 
+        int lead = ch->moving ? 14 : 0;
         int cam_x, cam_y;
         render_camera_get(&cam_x, &cam_y);
-        int want_x = hx - AREA_W / 2;
-        int want_y = hy - AREA_H / 2;
+        int want_x = hx - AREA_W / 2 + lead_dx[ch->facing & 7] * lead;
+        int want_y = hy - AREA_H / 2 + lead_dy[ch->facing & 7] * lead;
         // Ease toward the target; the divisor is the smoothing, and 2 keeps
         // the player near the centre without a visible lag.
         render_camera(cam_x + (want_x - cam_x) / 2,
@@ -8296,12 +8433,32 @@ void game_update(void)
             // something spreading rather than as a static disc.
             case FX_MUD:
             {
-                int t = e->life_max - e->life;
                 int r = e->radius - (e->life * e->radius) / (e->life_max * 2);
-                gfx_circle(e->x, e->y, r, PAL_CLAY_DARK);
-                gfx_circle(e->x, e->y, r - 2, PAL_CLAY_MID);
-                gfx_circle(e->x - 2, e->y - 1, r / 3, PAL_BRN_MID2);
-                (void)t;
+                gfx_circle(e->x, e->y + 1, r + 1, PAL_CLAY_DARK);
+                gfx_circle(e->x, e->y, r, PAL_CLAY_MID);
+                // A dithered wet sheen on the up-left: the light that pools
+                // on fresh mud. Dither, not a solid disc, or it reads as a
+                // second puddle sitting on the first.
+                for (int a = 128; a < 256; a += 8)
+                {
+                    int dx, dy;
+                    gfx_dir_256(a, &dx, &dy);
+                    gfx_fill_rect(e->x + (dx * r) / 170,
+                                  e->y + (dy * r) / 170, 1, 1, PAL_BRN_MID2);
+                }
+                // Bubbles that wander as the pool ages.
+                if (r >= 3)
+                {
+                    for (int k = 0; k < 3; k++)
+                    {
+                        int bx = e->x + ((g_frame * (3 + k) + k * 21)
+                                         % (2 * r)) - r;
+                        int by = e->y + ((g_frame * (5 + 2 * k) + k * 13)
+                                         % (r > 0 ? r : 1)) - r / 2;
+                        gfx_circle(bx, by, 1 + (k & 1), PAL_CLAY_DARK);
+                        gfx_fill_rect(bx - 1, by - 1, 1, 1, PAL_BRN_MID2);
+                    }
+                }
                 break;
             }
             case FX_STINK:
@@ -8310,42 +8467,81 @@ void game_update(void)
                 gfx_circle(e->x, e->y, r, PAL_PINE_DARK);
                 gfx_circle(e->x, e->y, r - 2, PAL_CACT_DARK);
                 gfx_circle(e->x - 1, e->y - 3, r / 2, PAL_GRN_MID);
+                // Drifting puffs orbiting the cloud: the cloud breathes
+                // instead of sitting there.
+                for (int k = 0; k < 5; k++)
+                {
+                    int a = (int)(g_frame * 2 + k * 51) & 255;
+                    int dx, dy;
+                    gfx_dir_256(a, &dx, &dy);
+                    int px = e->x + (dx * r) / 127;
+                    int py = e->y + (dy * r) / 150 - ((g_frame + k * 7) & 3);
+                    int pr = 2 + ((g_frame + k * 9) & 1);
+                    gfx_circle(px, py, pr, PAL_CACT_DARK);
+                    gfx_circle(px - 1, py - 1, pr / 2, PAL_GRN_MID);
+                }
                 gfx_fill_rect(e->x - 4, e->y - r - 2, 2, 2, PAL_GREEN_SPARK);
                 gfx_fill_rect(e->x + 3, e->y - r - 4, 2, 2, PAL_GREEN_SPARK);
                 break;
             }
             case FX_RAM_DUST:
+            {
+                int t = e->life_max - e->life;
                 for (int a = 0; a < 256; a += 32)
                 {
                     int dx, dy;
                     gfx_dir_256(a, &dx, &dy);
-                    gfx_fill_rect(e->x + (dx * e->radius) / 127,
-                                  e->y + (dy * e->radius) / 127 - 2,
-                                  3, 3, PAL_SAND_LIGHT);
-                    gfx_fill_rect(e->x + (dx * e->radius) / 127,
-                                  e->y + (dy * e->radius) / 127 - 2,
+                    int d = e->radius + t * 2;
+                    int sz = 3 - (t & 1);
+                    gfx_fill_rect(e->x + (dx * d) / 127 - 1,
+                                  e->y + (dy * d) / 127 - 2,
+                                  sz, sz, PAL_SAND_LIGHT);
+                    gfx_fill_rect(e->x + (dx * d) / 127,
+                                  e->y + (dy * d) / 127 - 2,
                                   1, 1, PAL_WHITE_SPARK);
                 }
                 break;
+            }
             case FX_PACIFY:
             {
                 int r = e->radius + ((g_frame >> 2) & 3);
                 gfx_circle_outline(e->x, e->y, r, PAL_HEAL_OUTER);
-                gfx_circle_outline(e->x, e->y, r - 1, PAL_HEAL_INNER);                for (int a = 0; a < 256; a += 64)
+                gfx_circle_outline(e->x, e->y, r - 1, PAL_HEAL_INNER);
+                gfx_circle_outline(e->x, e->y, r - 3, PAL_HEAL_CORE);
+                for (int a = 0; a < 256; a += 64)
                 {
                     int dx, dy;
                     gfx_dir_256(a + g_frame, &dx, &dy);
-                    gfx_fill_rect(e->x + (dx * r) / 127, e->y + (dy * r) / 127,
+                    gfx_fill_rect(e->x + (dx * r) / 127,
+                                  e->y + (dy * r) / 127,
                                   2, 2, PAL_HEAL_CORE);
                 }
+                // The little "z" drifting up: pacified means sleepy.
+                int zx = e->x + 6 + ((g_frame >> 4) & 1);
+                int zy = e->y - r - 3 - ((g_frame >> 3) & 3);
+                gfx_fill_rect(zx, zy, 3, 1, PAL_WHITE_SPARK);
+                gfx_fill_rect(zx + 1, zy + 1, 1, 1, PAL_WHITE_SPARK);
+                gfx_fill_rect(zx + 2, zy + 2, 3, 1, PAL_WHITE_SPARK);
                 break;
             }
             case FX_DUNG_TRAP:
+            {
                 gfx_circle(e->x, e->y + 1, 5, PAL_CHOCO_DARK);
                 gfx_circle(e->x, e->y, 4, PAL_CHOCO_MID);
                 gfx_circle(e->x - 1, e->y - 1, 2, PAL_CHOCO_LIGHT);
                 gfx_fill_rect(e->x + 1, e->y - 2, 2, 2, PAL_GREEN_SPARK);
+                // Two flies circling the pile: the trap's own idle hum.
+                for (int k = 0; k < 2; k++)
+                {
+                    int a = (int)(g_frame * 6 + k * 128) & 255;
+                    int dx, dy;
+                    gfx_dir_256(a, &dx, &dy);
+                    gfx_fill_rect(e->x + (dx * 8) / 127,
+                                  e->y - 2 + (dy * 4) / 127,
+                                  1, 1, PAL_OUTLINE);
+                }
                 break;
+            }
             case FX_LEVELUP:
             {
                 // Three rings at different radii, chasing each other outwards,
@@ -8369,6 +8565,16 @@ void game_update(void)
                                   e->y + (dy * (e->radius + t * 2)) / 127,
                                   2, 2, PAL_WHITE_SPARK);
                 }
+                // A brief pillar of light under the burst's first half.
+                if (t < e->life_max / 2)
+                {
+                    for (int py = 0; py < 26; py += 2)
+                    {
+                        int wob = ((g_frame + py) >> 1) & 1;
+                        gfx_fill_rect(e->x - 1 + wob, e->y - py - 6, 2, 2,
+                                      PAL_UI_GOLD_LIGHT);
+                    }
+                }
                 break;
             }
             default:
@@ -8384,10 +8590,35 @@ void game_update(void)
         for (int i = 0; i < MAX_GEMS; i++)
             draw_gem(i);
 
-        // The crowd, then the projectiles over it, then the characters on top
-        // so the player is never hidden by their own fight.
-        for (int i = 0; i < MAX_MONSTERS; i++)
-            draw_monster(i);
+        // The crowd, drawn back to front so overlapping creatures stack by
+        // depth rather than by pool slot: without the sort, a slime standing
+        // "in front of" a brute could flicker behind it as slots churn.
+        {
+            uint8_t yorder[MAX_MONSTERS];
+            int n = 0;
+            for (int i = 0; i < MAX_MONSTERS; i++)
+                if (g_monsters[i].alive)
+                    yorder[n++] = (uint8_t)i;
+            for (int a = 1; a < n; a++)
+            {
+                uint8_t v = yorder[a];
+                int32_t vx2, vy;
+                monster_center(&g_monsters[v], &vx2, &vy);
+                int b = a - 1;
+                while (b >= 0)
+                {
+                    int32_t bx2, by2;
+                    monster_center(&g_monsters[yorder[b]], &bx2, &by2);
+                    if (by2 <= vy)
+                        break;
+                    yorder[b + 1] = yorder[b];
+                    b--;
+                }
+                yorder[b + 1] = v;
+            }
+            for (int a = 0; a < n; a++)
+                draw_monster(yorder[a]);
+        }
 
         for (int i = 0; i < MAX_PROJECTILES; i++)
         {
@@ -8397,21 +8628,98 @@ void game_update(void)
             switch (p->kind)
             {
             case PROJ_WATER:
-                gfx_circle(p->x, p->y, p->radius, PAL_CYAN_MID);
+            {
+                // A pressurised jet: bright head, a tapering trail along its
+                // own velocity, and droplets spraying sideways off the nozzle.
+                int len = (iabs(p->vx) > iabs(p->vy)) ? iabs(p->vx)
+                                                      : iabs(p->vy);
+                if (len < 1)
+                    len = 1;
+                int tx = p->vx / len, ty = p->vy / len;
+                for (int k = 2; k >= 0; k--)
+                {
+                    int tr = p->radius - k * 2;
+                    if (tr < 1)
+                        tr = 1;
+                    gfx_circle(p->x - tx * k * 4, p->y - ty * k * 4, tr,
+                               (k == 0) ? PAL_CYAN_MID : PAL_CYAN_DARK);
+                }
                 gfx_circle(p->x, p->y,
                            p->radius > 3 ? p->radius - 3 : 1, PAL_CYAN_LIGHT);
-                gfx_circle(p->x, p->y, 1, PAL_WHITE_SPARK);
+                gfx_circle(p->x - tx * 2, p->y - ty * 2, 1, PAL_WHITE_SPARK);
+                gfx_fill_rect(p->x - ty * 4 - 1, p->y + tx * 4, 1, 1,
+                              PAL_CYAN_LIGHT);
+                gfx_fill_rect(p->x + ty * 4, p->y - tx * 4 - 1, 1, 1,
+                              PAL_CYAN_LIGHT);
                 break;
+            }
             case PROJ_DUNG:
-                gfx_circle(p->x, p->y, p->radius > 4 ? 4 : p->radius,
-                           PAL_CHOCO_DARK);
-                gfx_circle(p->x, p->y, 2, PAL_CHOCO_MID);
+            {
+                // The lobbed ball, tumbling: its highlight rolls with the
+                // flight and a crumb drops off behind it.
+                int pr = p->radius > 4 ? 4 : p->radius;
+                gfx_circle(p->x, p->y, pr, PAL_CHOCO_DARK);
+                gfx_circle(p->x, p->y, pr - 1, PAL_CHOCO_MID);
+                int a = (int)(g_frame * 10) & 255;
+                int dx, dy;
+                gfx_dir_256(a, &dx, &dy);
+                gfx_fill_rect(p->x + (dx * pr) / 170 - 1,
+                              p->y + (dy * pr) / 170 - 1,
+                              2, 2, PAL_CHOCO_LIGHT);
+                int len = (iabs(p->vx) > iabs(p->vy)) ? iabs(p->vx)
+                                                      : iabs(p->vy);
+                if (len >= 1)
+                    gfx_fill_rect(p->x - (p->vx / len) * 5,
+                                  p->y - (p->vy / len) * 5,
+                                  1, 1, PAL_CHOCO_DARK);
                 break;
+            }
             case PROJ_ENEMY:
-                gfx_fill_rect(p->x - 3, p->y - 3, 6, 6, PAL_PURPLE_DARK);
-                gfx_fill_rect(p->x - 2, p->y - 2, 4, 4, PAL_PURPLE_MID);
-                gfx_fill_rect(p->x - 1, p->y - 1, 2, 2, PAL_PURPLE_LIGHT);
+            {
+                // Region-flavoured shots: the same colours the duel arena
+                // uses, so a swamp bolt and a volcano bolt do not look alike.
+                const DuelDef *dd = &g_duel_defs[g_region_id];
+                gfx_circle(p->x, p->y, 4, dd->proj_a);
+                gfx_circle(p->x, p->y, 3, dd->proj_b);
+                gfx_fill_rect(p->x - 1, p->y - 1, 2, 2, dd->proj_c);
+                int len = (iabs(p->vx) > iabs(p->vy)) ? iabs(p->vx)
+                                                      : iabs(p->vy);
+                if (len >= 1)
+                    gfx_fill_rect(p->x - (p->vx / len) * 5 - 1,
+                                  p->y - (p->vy / len) * 5 - 1,
+                                  2, 2, dd->proj_a);
                 break;
+            }
+            case PROJ_LOB:
+            {
+                // A scalding lob: hot body, brighter core, a smoke trail --
+                // and (this used to be missing entirely) an actual sprite,
+                // so the treefrog's shot is no longer an invisible tax.
+                gfx_circle(p->x + 2, p->y + 6, 3, PAL_SHADOW);
+                gfx_circle(p->x, p->y, 4, PAL_ORANGE_MID);
+                gfx_circle(p->x - 1, p->y - 1, 2, PAL_YELLOW_MID);
+                gfx_fill_rect(p->x - 2, p->y - 2, 1, 1, PAL_WHITE_SPARK);
+                int len = (iabs(p->vx) > iabs(p->vy)) ? iabs(p->vx)
+                                                      : iabs(p->vy);
+                if (len >= 1)
+                {
+                    gfx_fill_rect(p->x - (p->vx / len) * 6,
+                                  p->y - (p->vy / len) * 6,
+                                  2, 2, PAL_GREY_MID);
+                    gfx_fill_rect(p->x - (p->vx / len) * 4,
+                                  p->y - (p->vy / len) * 4,
+                                  1, 1, PAL_ORANGE_MID);
+                }
+                break;
+            }
+            case PROJ_MUD:
+            {
+                // The ultimate's flung mud, which used to draw as nothing.
+                gfx_circle(p->x, p->y, 4, PAL_CLAY_DARK);
+                gfx_circle(p->x, p->y, 3, PAL_CLAY_MID);
+                gfx_fill_rect(p->x - 1, p->y - 2, 1, 1, PAL_BRN_MID2);
+                break;
+            }
             default:
                 break;
             }
@@ -8425,8 +8733,12 @@ void game_update(void)
                 continue;
             if (e->kind == FX_BITE)
             {
-                // A bite is a snap, so it is drawn as a ring of teeth marks
-                // with a bright core: it has to read in one or two frames.
+                // A bite is a snap: one full-white flash frame, then the
+                // ring of teeth marks with a bright core. The flash is what
+                // separates "landed" from "grazed" in a crowd of forty.
+                int t = e->life_max - e->life;
+                if (t < 2)
+                    gfx_circle(e->x, e->y, 6, PAL_WHITE_SPARK);
                 gfx_circle(e->x, e->y, 5, PAL_ARC_CORE);
                 gfx_circle(e->x, e->y, 3, PAL_WHITE_SPARK);
                 gfx_circle_outline(e->x, e->y, 7, PAL_OUTLINE);
@@ -8442,8 +8754,12 @@ void game_update(void)
             {
                 // The sweep arc: a fan of sparks trailing the ring, which is
                 // what says "this is moving round you" rather than "you are
-                // standing in a circle".
+                // standing in a circle". The first two frames flash the whole
+                // disc, so a perfect-timing sweep lands with a clap of light.
+                int t = e->life_max - e->life;
                 int r = e->radius;
+                if (t < 2)
+                    gfx_circle(e->x, e->y, r, PAL_ARC_INNER);
                 gfx_circle_outline(e->x, e->y, r, PAL_ARC_CORE);
                 gfx_circle_outline(e->x, e->y, r - 3, PAL_ARC_INNER);
                 gfx_circle_outline(e->x, e->y, r - 6, PAL_ARC_OUTER);
@@ -8496,19 +8812,25 @@ void game_update(void)
             }
             else if (e->kind == FX_HIT)
             {
-                // Impact sparks. spawned on every landed blow, so they have to
-                // be cheap and they have to fade fast or a crowd turns into
-                // confetti.
+                // Impact sparks, drawn as a four-point star: two crossing
+                // bars and diagonal ticks that stretch as the effect ages.
+                // Spawned on every landed blow, so it stays cheap -- but the
+                // star silhouette is what makes a hit read in a crowd where
+                // eight radial dots would read as noise.
                 int t = e->life_max - e->life;
                 uint8_t c = (t < 3) ? PAL_WHITE_SPARK
                                     : (t < 8 ? PAL_YELLOW_LIGHT : PAL_ORANGE_MID);
-                for (int a = 0; a < 256; a += 64)
+                int r = 3 + t;
+                if (r > 8)
+                    r = 8;
+                gfx_hline(e->x - r, e->x + r, e->y, c);
+                gfx_fill_rect(e->x, e->y - r, 1, r * 2 + 1, c);
+                for (int k = 2; k < r; k++)
                 {
-                    int dx, dy;
-                    gfx_dir_256((int)(a + e->x * 7), &dx, &dy);
-                    int rr = e->radius + t;
-                    gfx_fill_rect(e->x + (dx * rr) / 127,
-                                  e->y + (dy * rr) / 127, 2, 2, c);
+                    gfx_fill_rect(e->x + k, e->y + k, 1, 1, c);
+                    gfx_fill_rect(e->x - k, e->y + k, 1, 1, c);
+                    gfx_fill_rect(e->x + k, e->y - k, 1, 1, c);
+                    gfx_fill_rect(e->x - k, e->y - k, 1, 1, c);
                 }
                 if (t < 3)
                     gfx_fill_rect(e->x - 2, e->y - 2, 4, 4, PAL_WHITE_SPARK);
@@ -8531,16 +8853,23 @@ void game_update(void)
         if (leap_beat)
             duel_leap_out_draw();
 
-        // Low-health edge: the frame of the whole screen pulses when the
-        // next hit ends the run.
+        // Low-health edge: the frame of the whole screen pulses once the
+        // capybara is a quarter down -- early enough to matter while there is
+        // still something to do about it -- and pulses faster and hotter
+        // inside the last heart.
         Hero *lh2 = &g_heroes[g_local_hero];
-        if (lh2->active && lh2->hearts <= 1 && ((g_frame >> 3) & 1))
+        if (lh2->active && lh2->hearts_max > 0)
         {
-            uint8_t c = PAL_RED_LIGHT;
-            gfx_fill_rect(0, 0, AREA_W, 2, c);
-            gfx_fill_rect(0, AREA_H - 2, AREA_W, 2, c);
-            gfx_fill_rect(0, 0, 2, AREA_H, c);
-            gfx_fill_rect(AREA_W - 2, 0, 2, AREA_H, c);
+            bool quarter = lh2->hearts * 4 <= lh2->hearts_max;
+            bool last = lh2->hearts <= 1;
+            if (quarter && ((g_frame >> (last ? 2 : 3)) & 1))
+            {
+                uint8_t c = last ? PAL_RED_LIGHT : PAL_RED_DARK;
+                gfx_fill_rect(0, 0, AREA_W, 2, c);
+                gfx_fill_rect(0, AREA_H - 2, AREA_W, 2, c);
+                gfx_fill_rect(0, 0, 2, AREA_H, c);
+                gfx_fill_rect(AREA_W - 2, 0, 2, AREA_H, c);
+            }
         }
     }
 
@@ -8777,16 +9106,20 @@ void hub_update(void)
     if (g_multiplayer && g_heroes[1].active)
         hero_update(1);
 
-    // Follow camera
+    // Follow camera, with the same soft lead the field uses: the hub is small,
+    // but a view that drifts into the walk still reads better than a rigid one.
     Hero *h = &g_heroes[g_local_hero];
     if (h->active)
     {
+        static const int8_t lead_dx[DIRS_COUNT] = { 0, 0, -1, 1, -1, 1, -1, 1 };
+        static const int8_t lead_dy[DIRS_COUNT] = { 1, -1, 0, 0, 1, 1, -1, -1 };
         int32_t hx, hy;
         hero_center(h, &hx, &hy);
+        int lead = h->moving ? 12 : 0;
         int cam_x, cam_y;
         render_camera_get(&cam_x, &cam_y);
-        int want_x = hx - AREA_W / 2;
-        int want_y = hy - AREA_H / 2;
+        int want_x = hx - AREA_W / 2 + lead_dx[h->facing & 7] * lead;
+        int want_y = hy - AREA_H / 2 + lead_dy[h->facing & 7] * lead;
         render_camera(cam_x + (want_x - cam_x) / 2,
                       cam_y + (want_y - cam_y) / 2);
     }

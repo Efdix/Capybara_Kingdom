@@ -1672,13 +1672,6 @@ int main(int argc, char *argv[])
 
     int fade = 0;   // start black, fade in
 
-    // Buttons pressed during a hitstop. A frozen frame runs no state handler,
-    // so a press that begins and ends inside those few frames would be an edge
-    // nobody ever saw; it is banked here and handed to the first frame that
-    // actually runs. Without this, every freeze is a small chance to eat the
-    // input the player pressed in reaction to the very hit that caused it.
-    uint16_t latched_down = 0;
-
     while (1)
     {
         perf_wait_vblank();
@@ -1689,11 +1682,14 @@ int main(int argc, char *argv[])
 
         // Hitstop. Holding the picture is all this needs to do: every screen
         // draws into the same two shadow buffers, and render_flush() copies
-        // those buffers to VRAM whether or not anything redrew them.
+        // those buffers to VRAM whether or not anything redrew them. Edges
+        // pressed during the freeze are banked inside input.c (input_latch),
+        // so gameplay code -- not just this dispatcher -- sees them on the
+        // first frame that runs.
         if (g_hitstop > 0)
         {
             g_hitstop--;
-            latched_down |= down;
+            input_latch(down);
             set_brightness(fade);
             perf_draw_hud();
             render_flush();
@@ -1702,8 +1698,6 @@ int main(int argc, char *argv[])
             perf_frame_end();
             continue;
         }
-        down |= latched_down;
-        latched_down = 0;
 
         // A state change cancels the pause: dying while the panel was up (a
         // linked field keeps moving under it) must not bring the panel back

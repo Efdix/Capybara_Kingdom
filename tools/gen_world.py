@@ -162,12 +162,18 @@ def paste_prop(dst, sub, rim=RIM, shadow=True):
 # ---------------------------------------------------------------------------
 
 def ground_tile(base, speck_a, speck_b, rng, tuft=None, tuft_style=0):
-    """Ground with organised detail.
+    """Ground in the GBA Pokemon manner: one flat fill carrying a scatter of
+    small hard-edged marks.
 
-    The old version scattered single pixels, which at 16px reads as dirt rather
-    than as grass. Detail here is built from two-pixel tufts, a couple of small
-    stones and one broad soft patch, so the tile has a subject without turning
-    into noise -- and repeated across a field it still reads as plain ground.
+    No soft ellipse mottling -- blurred patches at 16px read as dirt smudges
+    once tiled, and tiled dirt smudges are wallpaper. Instead the tile gets:
+      * short 1-2px dashes of the darker speckle (cast by grass blades),
+      * a few single lighter pixels (caught light),
+      * on the richest variants, one classic 3-blade grass tuft: two dark
+        dashes and a light pixel above them, the little 'w' mark every GBA
+        route uses.
+    Density varies BY VARIANT so a field settles into an uneven rhythm of
+    busy and quiet ground.
     """
     c = Canvas(TILE, TILE)
     c.rect(0, 0, TILE, TILE, ix(base))
@@ -176,43 +182,36 @@ def ground_tile(base, speck_a, speck_b, rng, tuft=None, tuft_style=0):
     col_b = ix(speck_b)
     col_tuft = ix(tuft if tuft else speck_a)
 
-    # One broad mottled patch, offset per variant so the field never looks
-    # tiled. Kept low-contrast -- it is the "light falling unevenly" layer, not
-    # a feature -- because a strong patch repeats visibly once the tile is
-    # drawn a few hundred times across a region.
-    px = (tuft_style * 5) % 9 + 3
-    py = (tuft_style * 7) % 9 + 3
-    c.ellipse(px, py, 5.0, 3.4, col_b)
-    c.ellipse(px, py, 3.4, 2.2, ix(base))
+    # How much detail this variant carries. Variants 0-1 are nearly bare,
+    # 2-4 light, 5-6 busier, 7 the busiest; `tuft_style` runs past 7 for the
+    # secondary grounds, so it wraps and those stay naturally calm.
+    density = (1, 1, 2, 2, 2, 3, 3, 5)[tuft_style % 8]
 
-    # Two or three tufts: a three-pixel stroke with a shadow pixel under it,
-    # which is the smallest mark that still reads as a blade of grass.
-    for k in range(2 + (tuft_style % 2)):
-        gx = (tuft_style * 7 + k * 8 + 3) % (TILE - 4) + 2
-        gy = (tuft_style * 11 + k * 6 + 4) % (TILE - 4) + 2
-        style = (tuft_style + k) % 4
-        if style == 0:
-            c.set(gx, gy, col_tuft)
-            c.set(gx - 1, gy + 1, col_tuft)
-            c.set(gx + 1, gy + 1, col_tuft)
-            c.set(gx, gy + 2, col_b)
-        elif style == 1:
-            c.set(gx, gy, col_tuft)
-            c.set(gx + 1, gy + 1, col_tuft)
-            c.set(gx, gy + 2, col_b)
-        elif style == 2:
-            c.set(gx, gy + 1, col_b)
-            c.set(gx + 1, gy, col_tuft)
-            c.set(gx + 1, gy + 1, col_b)
+    # Dark dashes: the shadow side of blades of grass. One or two pixels
+    # long, placed by rng so no two tiles share a layout.
+    for k in range(density):
+        dx = rng.randrange(1, TILE - 2)
+        dy = rng.randrange(1, TILE - 1)
+        if rng.random() < 0.6:
+            c.set(dx, dy, col_b)
+            c.set(dx + 1, dy, col_b)
         else:
-            c.set(gx, gy, col_tuft)
-            c.set(gx, gy + 1, col_tuft)
-            c.set(gx + 1, gy + 1, col_b)
+            c.set(dx, dy, col_b)
 
-    # Pebbles: two 1px dots of the highlight tone. This is the cheapest way to
-    # keep a large flat area from looking like a single fill.
-    c.set((tuft_style * 3) % 14 + 1, (tuft_style * 9) % 14 + 1, col_a)
-    c.set((tuft_style * 5 + 8) % 14 + 1, (tuft_style * 4 + 5) % 14 + 1, col_a)
+    # Light dots: caught light, one per two dark marks.
+    for k in range(max(1, density // 2)):
+        c.set(rng.randrange(1, TILE - 1), rng.randrange(1, TILE - 1), col_a)
+
+    # The classic tuft, only on the richest variants: a light pixel over
+    # two dark ones -- the GBA 'w' of grass.
+    if tuft is not None and tuft_style % 8 >= 6:
+        tx = rng.randrange(2, TILE - 4)
+        ty = rng.randrange(3, TILE - 3)
+        c.set(tx, ty - 1, col_tuft)
+        c.set(tx + 2, ty - 1, col_tuft)
+        c.set(tx + 1, ty - 2, col_tuft)
+        c.set(tx, ty, col_b)
+        c.set(tx + 2, ty, col_b)
 
     return c
 
@@ -233,23 +232,42 @@ def path_tile(base, lit, dark, rng, variant=0):
 
     if variant == 0:
         for i, py in enumerate((0, 4, 8, 12)):
+            # Every other board sits a hair darker: a deck of identical
+            # boards reads as wallpaper, a deck with tonal variation reads
+            # as timber that has weathered unevenly.
+            board = ix(base) if (i & 1) == 0 else ix(dark)
+            c.rect(0, py, TILE, 4, board)
             c.hline(0, TILE - 1, py, col_lit)          # bevel along the top
-            c.hline(0, TILE - 1, py + 1, ix(base))
+            c.hline(0, TILE - 1, py + 1, board)
             c.hline(0, TILE - 1, py + 3, col_dark)     # gap between boards
-            # Stagger the board ends so the deck does not look like a ladder.
+            # Stagger the board ends so the deck does not look like a ladder,
+            # and nail each board down where it ends: two dark pins with a
+            # lit head, the detail that says "built" rather than "painted".
             end = (i * 5 + 3) % TILE
             c.set(end, py + 2, col_dark)
             c.set((end + 9) % TILE, py + 2, col_dark)
+            c.set(end, py + 1, col_lit)
+            c.set((end + 9) % TILE, py + 1, col_lit)
+            # A grain dash or two per board.
+            g = (i * 7 + 2) % (TILE - 6)
+            c.hline(g, g + 3, py + 2, col_dark)
         c.set(4, 6, col_dark)                          # a knot in the timber
         c.set(11, 10, col_dark)
+        c.set(5, 5, col_lit)
     else:
         stones = [(0, 0, 7, 6), (8, 1, 8, 5),
                   (1, 7, 6, 5), (8, 7, 8, 7), (1, 13, 6, 3)]
         for sx, sy, sw, sh in stones:
             c.round_rect(sx, sy, sw, sh, 2, col_dark)
             c.round_rect(sx, sy, sw - 1, sh - 1, 2, ix(base))
+            # Two-plane bevel: lit up and left, shaded down and right, so
+            # each stone reads as a slab with thickness.
             c.hline(sx + 1, sx + sw - 3, sy, col_lit)
             c.vline(sx, sy + 1, sy + sh - 3, col_lit)
+            c.vline(sx + sw - 2, sy + 2, sy + sh - 2, col_dark)
+            # A joint speck between stones keeps big slabs from reading as
+            # one poured surface.
+            c.set(sx + sw // 2, sy + sh // 2, col_lit)
     return c
 
 
@@ -287,7 +305,6 @@ def water_tile(ramp, rng, variant=0, shallow=False):
         c.rect(0, 0, TILE, TILE, col_mid)
         for (sx, sy) in ((3, 4), (9, 3), (6, 9), (12, 11), (2, 12), (14, 6)):
             c.ellipse(sx, sy, 2.8, 2.0, col_light)
-            c.ellipse(sx, sy, 1.6, 1.0, col_dark)
         for i, y in enumerate((3, 8, 13)):
             offset = (y * 3) % 5
             c.hline(offset, min(TILE - 1, offset + 6), y, col_light)
@@ -295,13 +312,21 @@ def water_tile(ramp, rng, variant=0, shallow=False):
 
     c.rect(0, 0, TILE, TILE, col_mid)
 
-    # Bands of highlight/dark in pairs read as ripples; a single line reads as
-    # a stray mark. Two rows per ripple, offset per band, is the whole trick.
+    # GBA water: the fill does the depth work, and ripples are short light
+    # dashes with nothing under them. (The old version underdrew every dash
+    # with a dark line; tiled, that read as a persian rug.) One dash in four
+    # carries a dark echo instead.
     for i, y in enumerate((2, 6, 10, 14)):
-        offset = (y * 3) % 5
-        c.hline(offset, min(TILE - 1, offset + 5), y, col_light)
-        c.hline(offset + 1, min(TILE - 1, offset + 6), y + 1, col_dark)
-        c.hline(min(TILE - 1, offset + 8), TILE - 1, y, col_dark)
+        offset = (y * 3 + variant) % 5
+        c.hline(offset, min(TILE - 1, offset + 4), y, col_light)
+        if i % 3 == 1:
+            c.hline(offset + 2, min(TILE - 1, offset + 6), y, col_dark)
+        elif i % 3 == 2:
+            c.hline(offset + 3, min(TILE - 1, offset + 7), y, col_dark)
+
+    # Two catchlights: the sparkle the sun leaves on moving water.
+    c.set(4, 3, col_light)
+    c.set(12, 9, col_light)
 
     if variant == 1:
         # Lily pads: two discs at different sizes so the cluster has depth.
@@ -310,6 +335,8 @@ def water_tile(ramp, rng, variant=0, shallow=False):
             c.ellipse(lx, ly - 0.5, r - 0.6, r * 0.72 - 0.5, ix("grn_light"))
             c.set(lx + 1, ly, col_mid)
             c.set(lx + 2, ly, col_mid)
+            c.set(lx - 1, ly - 2, ix("pink_mid"))
+            c.set(lx - 1, ly - 3, ix("pink_light"))
         c.circle(10, 6, 1.2, ix("pink_mid"))
         c.set(10, 5, ix("pink_light"))
     elif variant == 3:
@@ -324,115 +351,154 @@ def water_tile(ramp, rng, variant=0, shallow=False):
 # ---------------------------------------------------------------------------
 
 def prop_tree(foliage, trunk, rng, fruit=None):
-    """A canopy tree: trunk, then three stacked canopy lobes, then rim light.
-
-    Three lobes rather than one ellipse is what separates a tree from a green
-    ball -- the eye reads the notches between lobes as leaves.
+    """A canopy tree in the GBA Pokemon manner: the crown is one wide,
+    bumpy mass that fills the top of the tile and overhangs the trunk on
+    both sides, read through three hard tones -- a dark under-skirt, the
+    mid body, and a light cap on the up-left -- plus sparse leaf marks.
+    The trunk is short and thick, flares at the roots, and falls into
+    shadow where the crown sits on it.
     """
     sub = Canvas(TILE, TILE)
     dark, mid, light = foliage
+    td, tm, tl = trunk
 
-    # Trunk, with a flare at the base so it is planted rather than pasted.
-    sub.rect(6, 8, 4, 7, ix(trunk[0]))
-    sub.rect(6, 8, 3, 7, ix(trunk[1]))
-    sub.vline(8, 9, 14, ix(trunk[2]))
-    sub.set(5, 14, ix(trunk[0]))
-    sub.set(10, 14, ix(trunk[0]))
-    sub.set(9, 12, ix(trunk[0]))       # a bark notch
+    # Trunk: 3px shaft, flared roots, lit left edge.
+    sub.rect(6, 10, 4, 5, ix(td))
+    sub.rect(6, 10, 3, 5, ix(tm))
+    sub.vline(6, 11, 14, ix(tl))          # lit edge, key light from up-left
+    sub.vline(9, 10, 14, ix(td))
+    sub.set(5, 14, ix(td)); sub.set(4, 14, ix(td))    # root flare, left
+    sub.set(10, 14, ix(td)); sub.set(11, 14, ix(td))  # root flare, right
+    sub.set(8, 12, ix(td))                            # bark notch
 
-    # Canopy: dark underlayer offset down, mid body, light cap up-left.
-    sub.ellipse(8.0, 8.0, 7.2, 5.2, ix(dark))
-    sub.ellipse(4.5, 8.5, 4.2, 3.6, ix(dark))
-    sub.ellipse(11.5, 8.5, 4.2, 3.6, ix(dark))
+    # Canopy: three lobes (left, right, crown) fused into one mass. Each
+    # lobe draws dark under, mid over, and a light cap up-left; the fused
+    # silhouette is bumpy, which is what separates a tree crown from a ball.
+    for (cx, cy, rx, ry) in ((5.2, 7.2, 4.6, 3.8),
+                             (10.8, 7.2, 4.6, 3.8),
+                             (8.0, 4.6, 5.0, 3.6)):
+        sub.blob(cx, cy + 1.0, rx, ry, ix(dark), n=3.0)
+        sub.blob(cx, cy, rx - 0.3, ry - 0.3, ix(mid), n=3.0)
+        sub.blob(cx - rx * 0.30, cy - ry * 0.34,
+                 (rx - 0.3) * 0.60, (ry - 0.3) * 0.58, ix(light), n=3.0)
 
-    sub.ellipse(8.0, 6.2, 6.8, 5.0, ix(mid))
-    sub.ellipse(5.0, 6.5, 3.8, 3.2, ix(mid))
-    sub.ellipse(11.0, 6.5, 3.8, 3.2, ix(mid))
+    # Leaf texture: dark dashes along lobe undersides, light dots on the
+    # caps. Sparse on purpose -- five marks per tile.
+    for (x, y) in ((3, 11), (7, 12), (12, 11), (5, 8), (10, 9)):
+        sub.set(x, y, ix(dark))
+        sub.set(x + 1, y, ix(dark))
+    for (x, y) in ((4, 4), (8, 2), (12, 5)):
+        sub.set(x, y, ix(light))
 
-    sub.ellipse(5.8, 4.2, 3.6, 2.6, ix(light))
-    sub.ellipse(9.6, 4.8, 3.0, 2.2, ix(light))
-    sub.hline(4, 8, 3, ix(light))
-    sub.set(4, 3, ix("white_spark"))
-    sub.set(9, 3, ix("white_spark"))
+    # Shadow band where canopy meets trunk.
+    sub.hline(6, 9, 10, ix(td))
 
     if fruit == "orange":
-        sub.circle(4.0, 9.0, 1.6, ix("orange_dark"))
-        sub.circle(4.0, 9.0, 1.1, ix("orange_mid"))
-        sub.set(3, 8, ix("yellow_mid"))
-        sub.circle(12.0, 9.5, 1.5, ix("orange_dark"))
-        sub.circle(12.0, 9.5, 1.0, ix("orange_mid"))
+        for (fx, fy) in ((4.2, 9.4), (11.8, 9.0)):
+            sub.circle(fx, fy, 1.6, ix("orange_dark"))
+            sub.circle(fx - 0.2, fy - 0.2, 1.1, ix("orange_mid"))
+            sub.set(int(fx) - 1, int(fy) - 1, ix("yellow_mid"))
+            sub.set(int(fx), int(fy) - 2, ix("grn_dark"))   # stem
     elif fruit == "cacao":
-        sub.ellipse(3.5, 9.5, 1.5, 2.4, ix("orange_dark"))
-        sub.ellipse(3.5, 9.5, 1.0, 1.8, ix("orange_mid"))
-        sub.ellipse(12.0, 9.0, 1.3, 2.1, ix("grn_mid"))
+        for (fx, fy) in ((3.6, 10.2), (12.2, 9.4)):
+            sub.ellipse(fx, fy, 1.4, 2.2, ix("orange_dark"))
+            sub.ellipse(fx - 0.2, fy, 1.0, 1.7, ix("orange_mid"))
+            sub.vline(int(fx), int(fy) - 2, int(fy) - 1, ix("grn_dark"))
 
     return sub
 
 
 def prop_palm(trunk, rng):
-    """A palm for the sunny regions: a leaning trunk and separate fronds."""
+    """A palm whose fronds are arcs, not radiating dots.
+
+    Each frond is a two-pixel rib that curves out and down: light on top,
+    dark beneath, drooping at the tip. Six of them around a coconuts pair
+    reads as a palm from any of the game's camera angles.
+    """
     sub = Canvas(TILE, TILE)
     td, tm, tl = trunk
-    # Trunk leans right, three pixels wide, with ring marks.
+
+    # Trunk leans right with ring marks every other row.
     for i, y in enumerate(range(6, 16)):
-        x = 5 + i // 3
+        x = 5 + i // 4
         sub.rect(x, y, 3, 1, ix(tm))
         sub.set(x, y, ix(tl))
         sub.set(x + 2, y, ix(td))
         if i % 2 == 0:
             sub.set(x + 1, y, ix(td))
+    sub.set(5, 15, ix(td)); sub.set(8, 15, ix(td))   # root flare
 
-    # Fronds radiating from the crown, dark under light.
-    for (dx, dy) in ((-6, -3), (-4, -5), (0, -6), (4, -5), (6, -3),
-                     (-5, 1), (5, 1), (0, -1)):
+    # Fronds: arcs from the crown at (9, 5). Each rib walks out and dips.
+    fronds = ((-1, -1, -6), (-1, 0, -7), (0, -1, -8),
+              (1, -1, -6), (1, 0, -7), (0, 1, -8))
+    for (sx, sy, span) in fronds:
         cx, cy = 9, 5
         for s in range(1, 7):
-            px = cx + (dx * s) // 5
-            py = cy + (dy * s) // 5
-            sub.set(px, py, ix("leaf_dark"))
-            sub.set(px, py - 1, ix("leaf_mid") if s > 2 else ix("leaf_light"))
+            px = cx + (sx * s * 5) // 6
+            py = cy + (sy * s * 4) // 6 + (s * s) // 9   # the droop
+            if 0 <= px < TILE and 0 <= py < TILE:
+                sub.set(px, py, ix("leaf_dark"))
+                sub.set(px, py - 1, ix("leaf_mid" if s > 2 else "leaf_light"))
     sub.set(8, 4, ix("leaf_light"))
-    sub.circle(9, 6, 1.4, ix("brn_deep"))
+
+    # Coconut pair under the crown.
+    sub.circle(7.6, 6.4, 1.5, ix("brn_deep"))
+    sub.set(7, 6, ix("brn_mid2"))
+    sub.circle(10.4, 6.6, 1.4, ix("brn_deep"))
+    sub.set(10, 6, ix("brn_mid2"))
     return sub
 
 
 def prop_rock(ramp, rng, moss=True):
-    """A boulder with a real lit facet and a shadow facet."""
+    """A boulder with three real facets and a crack.
+
+    The silhouette is one superellipse; the facets are a straight-edged lit
+    plane up-left, a dark plane right, and a crack that runs down the mid
+    face. A tuft of grass at the base grounds it.
+    """
     sub = Canvas(TILE, TILE)
     dark, mid, light = ramp
 
-    sub.ellipse(8.0, 10.0, 6.6, 4.6, ix(dark))
-    sub.ellipse(7.6, 9.4, 6.0, 4.2, ix(mid))
-    # Lit plane: an off-centre ellipse, not a symmetric one, so the boulder has
-    # a direction rather than a dome.
-    sub.ellipse(6.6, 8.2, 3.8, 2.6, ix(light))
-    sub.hline(5, 8, 7, ix("cream"))
-    sub.set(4, 9, ix(dark))
-    sub.set(12, 11, ix(dark))
+    sub.blob(8.0, 10.2, 6.6, 4.8, ix(mid), n=2.6)
+    # Lit facet: clipped by the silhouette, edge running down-right.
+    sub.blob(6.4, 8.8, 4.0, 2.8, ix(light), n=2.4)
+    # Dark facet: right side plane.
+    sub.blob(11.2, 11.0, 3.2, 2.6, ix(dark), n=2.4)
+    # Crack: a two-segment dark polyline down the mid face.
+    sub.vline(8, 7, 9, ix(dark))
+    sub.set(9, 10, ix(dark))
+    sub.set(9, 11, ix(dark))
+    sub.hline(5, 7, 7, ix("cream"))       # catchlight on the lit plane
+    sub.hline(4, 11, 14, ix(dark))        # ground contact
 
     if moss:
-        sub.ellipse(6.4, 6.6, 3.4, 1.6, ix("grn_light"))
+        sub.ellipse(6.0, 6.8, 3.0, 1.4, ix("grn_light"))
         sub.set(5, 6, ix("leaf_light"))
-        sub.set(8, 7, ix("grn_mid"))
+        sub.set(9, 7, ix("grn_mid"))
+    else:
+        sub.set(4, 13, ix("grn_mid"))
+        sub.set(12, 14, ix("grn_mid"))
     return sub
 
 
 def prop_bush(ramp, rng, berries=None):
-    """A shrub: three lobes, a lit cap, and optionally berries."""
+    """A shrub: two overlapping lobes, dark under-skirt, lit caps."""
     sub = Canvas(TILE, TILE)
     dark, mid, light = ramp
 
-    sub.ellipse(8.0, 10.0, 6.6, 4.4, ix(dark))
-    sub.ellipse(5.0, 9.0, 4.0, 3.4, ix(mid))
-    sub.ellipse(11.0, 9.0, 4.0, 3.4, ix(mid))
-    sub.ellipse(8.0, 7.6, 4.8, 3.6, ix(mid))
-    sub.ellipse(6.4, 6.6, 3.0, 2.2, ix(light))
-    sub.set(5, 6, ix("white_spark"))
+    sub.blob(5.6, 9.6, 4.4, 3.6, ix(dark), n=3.0)
+    sub.blob(10.6, 9.8, 4.2, 3.4, ix(dark), n=3.0)
+    sub.blob(5.8, 9.0, 4.0, 3.2, ix(mid), n=3.0)
+    sub.blob(10.4, 9.2, 3.8, 3.0, ix(mid), n=3.0)
+    sub.blob(4.6, 7.6, 2.6, 2.0, ix(light), n=3.0)
+    sub.blob(9.8, 7.8, 2.4, 1.8, ix(light), n=3.0)
+    sub.hline(4, 12, 13, ix(dark))        # ground contact shadow row
 
     if berries:
-        for (bx, by) in ((-3, 0), (3, -1), (0, 2), (-1, -2)):
-            sub.circle(8 + bx, 9 + by, 1.3, ix(berries))
-            sub.set(8 + bx - 1, 9 + by - 1, ix("white_spark"))
+        for (bx, by) in ((5, 8), (11, 9), (8, 11), (7, 7)):
+            sub.circle(bx, by, 1.3, ix(berries))
+            sub.set(bx - 1, by - 1, ix("white_spark"))
+            sub.set(bx, by - 2, ix("grn_dark"))
     return sub
 
 
@@ -480,12 +546,13 @@ def prop_fence(wood, rng, post=True):
 # placed side by side because the wall pieces are designed to butt together.
 
 def prop_wall(wall, rng, kind=0):
-    """One 16x16 piece of a building's front wall.
+    """One 16x16 piece of a building's front wall, GBA-town style.
 
-    The wall is framed timber: corner posts, a top beam under the eave, a
-    bottom plate, and a stone footing at the very bottom. Those four lines are
-    what make a rectangle read as a wall rather than as a crate -- a flat panel
-    with a window in it does not.
+    The wall is plaster between dark corner posts, on a stone footing. The
+    window is the classic Pokemon town-house read: a deep blue frame, mid
+    blue glass, a white cross divider and a light sheen in the top-left
+    pane -- warm lamp-glass windows made every house look like it was
+    always dusk inside, and blue is what the memory holds onto.
 
     kind: 0 plain, 1 lit window, 2 door.
     """
@@ -509,20 +576,21 @@ def prop_wall(wall, rng, kind=0):
 
     if kind == 1:
         sub.round_rect(4, 5, 8, 8, 1, frame)
-        sub.rect(5, 6, 6, 6, ix("stone_shadow"))
-        sub.rect(5, 6, 6, 4, ix("lamp_glow"))
-        sub.rect(6, 7, 4, 2, ix("lamp_core"))
-        sub.vline(7, 6, 11, frame)
-        sub.hline(5, 10, 9, frame)
-        sub.hline(4, 11, 13, ix(wd))       # sill
+        sub.rect(5, 6, 6, 6, ix("blue_dark"))
+        sub.rect(5, 6, 6, 5, ix("blue_mid"))
+        sub.rect(5, 6, 2, 2, ix("blue_light"))      # the sheen pane
+        sub.vline(7, 6, 11, ix("white"))            # cross divider
+        sub.hline(5, 10, 8, ix("white"))
+        sub.vline(8, 6, 11, ix("blue_dark"))
+        sub.hline(4, 11, 13, ix(wd))                # sill
     elif kind == 2:
         sub.round_rect(4, 4, 8, 10, 1, frame)
-        sub.rect(5, 5, 6, 9, ix("plank_shadow"))
-        sub.rect(5, 5, 5, 9, ix("plank_dark"))
-        sub.vline(6, 6, 13, ix("plank_mid"))
+        sub.rect(5, 5, 6, 9, ix("trunk_dark"))
+        sub.rect(5, 5, 5, 9, ix("trunk_mid"))
+        sub.vline(6, 6, 13, ix("trunk_light"))
         sub.set(9, 9, ix("brass_mid"))
         sub.set(9, 10, ix("brass_shadow"))
-        sub.hline(5, 10, 4, ix("plank_light"))   # lintel
+        sub.hline(5, 10, 4, ix("plank_light"))      # lintel
     else:
         # A stud and a brace: the cheapest way to keep a blank wall from
         # reading as an untextured plane.
@@ -820,38 +888,45 @@ def prop_sign(rng):
 
 
 def prop_flower(petals, rng, center="yellow_light"):
-    """Five-petal flower with a stem, big enough to read at a glance."""
+    """Five-petal flower with a two-leaf stem and a lit corolla."""
     sub = Canvas(TILE, TILE)
     cx, cy = 8, 7
     sub.vline(cx, cy + 2, 14, ix("grn_mid"))
-    sub.set(cx - 1, cy + 4, ix("grn_light"))
-    sub.set(cx + 1, cy + 3, ix("leaf_light"))
+    sub.vline(cx, cy + 2, 14, ix("grn_light"))
+    sub.set(cx, cy + 14, ix("grn_dark"))
+    # Two leaves off the stem, one each side, lit edge up.
+    for (lx, ly, flip) in ((cx - 2, cy + 5, -1), (cx + 2, cy + 8, 1)):
+        sub.set(lx, ly, ix("grn_mid"))
+        sub.set(lx + flip, ly, ix("grn_light"))
+        sub.set(lx + flip, ly - 1, ix("leaf_light"))
     for (dx, dy) in ((-2, 0), (2, 0), (0, -2), (0, 2), (-1, -1), (1, -1)):
         sub.circle(cx + dx, cy + dy, 1.6, ix(petals))
+        sub.set(int(cx + dx) - 1, int(cy + dy) - 1,
+                ix("white_spark" if dx + dy < 0 else petals))
     sub.circle(cx, cy, 1.5, ix(center))
     sub.set(cx - 1, cy - 1, ix("white_spark"))
     return sub
 
 
 def prop_tallgrass(ramp, rng):
-    """A clump of tall grass.
+    """A clump of tall grass with curved blades.
 
-    Blades alone read as scattered dashes -- the eye needs a mass to attach
-    them to, so the clump is a low dark mound with the blades growing out of
-    its top edge and a lit tip on each blade. That is what makes the tile read
-    as "there is something here" from a moving camera.
+    The blades are two-pixel ribs that lean outward and tip back in at the
+    top -- straight vertical bars read as a picket fence once tiled, arcs
+    read as grass. Blade tips take the light tone, never white.
     """
     sub = Canvas(TILE, TILE)
     dark, mid, light = ramp
-    sub.ellipse(8, 13.0, 6.4, 3.0, ix(dark))
-    sub.ellipse(8, 12.2, 5.0, 2.2, ix(mid))
-    for (x, h, col) in ((3, 9, light), (5, 12, mid), (7, 14, light),
-                        (9, 11, mid), (11, 13, light), (13, 8, dark)):
-        sub.vline(x, TILE - h, 12, ix(col))
-        # Blade tips are the light tone, never white: six white pixels across
-        # one tile reads as a row of claws when it is tiled across a field.
-        sub.set(x, TILE - h, ix(light))
-        sub.set(x + 1, TILE - h + 2, ix(dark))
+    sub.ellipse(8, 13.2, 6.4, 2.8, ix(dark))
+    sub.ellipse(8, 12.4, 5.0, 2.0, ix(mid))
+    for (x, h, col, lean) in ((3, 9, light, -1), (5, 12, mid, -1),
+                              (7, 14, light, 0), (9, 11, mid, 1),
+                              (11, 13, light, 1), (13, 8, dark, 1)):
+        for k, y in enumerate(range(TILE - h, 13)):
+            px = x + (lean * k) // max(1, h // 3)
+            sub.set(px, y, ix(col))
+            sub.set(px + 1, y, ix(dark if k > h // 2 else mid))
+        sub.set(x + lean * (h // 3) // max(1, h // 3), TILE - h, ix(light))
     sub.ellipse(8, 9.0, 4.4, 1.6, ix(mid))
     return sub
 
@@ -928,15 +1003,25 @@ def prop_cane(foliage, rng):
 
 
 def prop_reeds(foliage, rng):
-    """Cattail reeds with fluffy seed heads."""
+    """Cattail reeds: arcs of leaf around two seed-head spikes."""
     sub = Canvas(TILE, TILE)
     dark, mid, light = foliage
     for i, x in enumerate((3, 7, 12)):
         h = 10 + (i % 2) * 3
-        sub.vline(x, TILE - h, TILE - 1, ix(mid))
-        sub.set(x, TILE - h, ix(light))
-        sub.rect(x - 1, TILE - h + 1, 3, 4, ix("brn_deep"))
-        sub.vline(x, TILE - h + 1, TILE - h + 4, ix("brn_mid2"))
+        # Stalk bends with the wind: lean grows toward the tip.
+        for k, y in enumerate(range(TILE - h, TILE)):
+            px = x + (1 if i != 1 else -1) * k // 6
+            sub.set(px, y, ix(mid))
+            if k < 2:
+                sub.set(px, y, ix(light))
+        top_x = x + (1 if i != 1 else -1) * h // 6
+        # Seed head: the brown sausage that says "cattail" at a glance.
+        sub.rect(top_x - 1, TILE - h + 1, 3, 4, ix("brn_deep"))
+        sub.vline(top_x, TILE - h + 1, TILE - h + 4, ix("brn_mid2"))
+        sub.set(top_x, TILE - h, ix(light))
+    # An arc leaf at the base, the reeds' own ground plane.
+    for k in range(6):
+        sub.set(4 + k, 14 - (k if k < 3 else 5 - k), ix(dark))
     return sub
 
 
@@ -1009,7 +1094,7 @@ REGIONS = {
         rock=("rock_dark", "rock_mid", "rock_light"),
         wood=("plank_shadow", "plank_mid", "plank_light"),
         water=("sea_deep", "sea_mid", "sea_light"),
-        wall=("plank_shadow", "plank_mid", "plank_light"),
+        wall=("clay_dark", "cream", "white"),
         roof=("tile_dark", "tile_mid", "tile_light"),
         roof2=("slate_dark", "slate_mid", "slate_light"),
         bush=("leaf_dark", "leaf_mid", "leaf_light"),
@@ -1076,8 +1161,10 @@ REGIONS = {
         # Wet meadow rather than a dark bog: the marsh is a place you fight
         # in for minutes at a time, so the base tone is the light one and the
         # dark olive is kept for the water and the shadows under the reeds.
+        # The secondary ground is mid mud, not the near-black peat: large
+        # patches of a very dark tone swallow everything drawn on top of them.
         ground=("murk_light", "cane_mid", "murk_mid"), tuft="cane_light",
-        ground2=("brn_deep", "brn_shadow", "brn_mid2"),
+        ground2=("brn_mid2", "brn_hi", "brn_deep"),
         path=("plank_shadow", "plank_light", "plank_dark"),
         ground3=("murk_dark", "murk_mid", "pine_dark"),
         foliage=("cane_dark", "cane_mid", "cane_light"),
@@ -1094,10 +1181,12 @@ REGIONS = {
     ),
     "cacao": dict(
         # Warm ash, brightened: the volcano's identity is carried by the lava
-        # and the chocolate cottages, not by a dark ground plane.
+        # and the chocolate cottages, not by a dark ground plane. The soil
+        # patches are mid brown for the same reason the marsh's are: a huge
+        # patch of near-black ground reads as a hole in the world.
         ground=("ash_warm_light", "clay_mid", "ash_warm_mid"),
         tuft="sand_light",
-        ground2=("brn_shadow", "brn_deep", "brn_mid2"),
+        ground2=("brn_mid2", "brn_hi", "brn_shadow"),
         path=("ash_warm_light", "ash_warm_mid", "ash_warm_dark"),
         ground3=("ash_warm_dark", "ash_warm_mid", "rock_dark"),
         foliage=("leaf_dark", "leaf_mid", "leaf_light"),
@@ -1296,6 +1385,27 @@ def scatter_blob(grid, rng, cx, cy, r, tile_id, jitter=0.45,
                 grid[y][x] = tile_id
 
 
+def scatter_on_ground(grid, rng, cx, cy, r, tile_id,
+                      cols=WORLD_COLS, rows=WORLD_ROWS, jitter=0.9):
+    """A cluster of walkable decoration, stamped only onto bare ground.
+
+    Decoration must never overwrite a prop, a road or a pond, so this is a
+    scatter_blob that refuses every tile that is not one of the three ground
+    tones. The clusters it leaves behind read as a patch of tall grass or a
+    tuft of flowers, where singles scattered uniformly read as noise.
+    """
+    walk = (T_GROUND_A, T_GROUND_B, T_GROUND_C)
+    for y in range(cy - r, cy + r + 1):
+        for x in range(cx - r, cx + r + 1):
+            if not (0 <= x < cols and 0 <= y < rows):
+                continue
+            if grid[y][x] not in walk:
+                continue
+            d = ((x - cx) ** 2 + (y - cy) ** 2) ** 0.5
+            if d <= r * (1.0 - jitter + rng.random() * jitter * 2.0):
+                grid[y][x] = tile_id
+
+
 def stamp_house(grid, x, y, w, roof_id, wall_id, door_at=1,
                 cols=HUB_COLS, rows=HUB_ROWS):
     """Stamp one building: a roof row over a wall row.
@@ -1385,12 +1495,16 @@ def build_hub_map(spec, rng):
     # --- 2. lawn mottling -------------------------------------------------
     # The darker tone is placed by a hash rather than by a periodic rule: a
     # periodic rule lays the variation out on a diagonal lattice, which is the
-    # one thing a park must not look like.
+    # one thing a park must not look like. The hash samples 2x2 blocks rather
+    # than single tiles, so the shade falls in broad damp patches instead of
+    # as per-tile dithering -- salt-and-pepper at tile scale is the other
+    # thing a lawn must not look like.
     for y in range(2, rows - 2):
         for x in range(2, cols - 2):
-            h = (x * 73856093) ^ (y * 19349663) ^ ((x >> 2) * 83492791)
+            h = ((x >> 1) * 73856093) ^ ((y >> 1) * 19349663) \
+                ^ (((x >> 1) + (y >> 1)) * 83492791)
             v = ((h >> 7) ^ (h >> 15)) % 100
-            grid[y][x] = T_GROUND_C if v < 14 else T_GROUND_A
+            grid[y][x] = T_GROUND_C if v < 12 else T_GROUND_A
 
     # --- 3. ponds ---------------------------------------------------------
     # One pond in each corner of the garden ring, clear of the plaza, the
@@ -1568,11 +1682,19 @@ def build_map(spec, rng, region):
 
     grid = [[T_GROUND_A] * WORLD_COLS for _ in range(WORLD_ROWS)]
 
-    for _ in range(90):
-        bx = rng.randrange(WORLD_COLS)
-        by = rng.randrange(WORLD_ROWS)
-        tile = rng.choice([T_GROUND_A] * 6 + [T_GROUND_B] * 2 + [T_GROUND_C])
-        scatter_blob(grid, rng, bx, by, rng.randrange(4, 13), tile)
+    # Ground variation: a few LARGE, ragged patches of the secondary and
+    # tertiary tones. Patches this size read as dry ground and shade on a
+    # real field; the old spray of ninety four-to-thirteen-tile blobs read
+    # as a checkerboard of confetti, which is the single worst thing a floor
+    # you stare at for ten minutes can do.
+    for _ in range(rng.randrange(10, 14)):
+        scatter_blob(grid, rng,
+                     rng.randrange(0, WORLD_COLS), rng.randrange(0, WORLD_ROWS),
+                     rng.randrange(6, 14), T_GROUND_B, jitter=0.55)
+    for _ in range(rng.randrange(5, 8)):
+        scatter_blob(grid, rng,
+                     rng.randrange(0, WORLD_COLS), rng.randrange(0, WORLD_ROWS),
+                     rng.randrange(4, 9), T_GROUND_C, jitter=0.55)
 
     centre = (WORLD_COLS // 2, WORLD_ROWS // 2)
     for _ in range(rng.randrange(5, 9)):
@@ -1592,11 +1714,16 @@ def build_map(spec, rng, region):
         tile = rng.choice([T_TREE] * 5 + [T_ROCK] * 2 + [T_BUSH] * 3)
         scatter_blob(grid, rng, bx, by, r, tile, jitter=0.85)
 
-    for _ in range(320):
-        x = rng.randrange(2, WORLD_COLS - 2)
-        y = rng.randrange(2, WORLD_ROWS - 2)
-        if grid[y][x] in (T_GROUND_A, T_GROUND_B, T_GROUND_C):
-            grid[y][x] = rng.choice([T_TALLGRASS, T_FLOWER, T_DECOR])
+    # Decoration grows in clusters -- a stand of tall grass, a patch of
+    # flowers -- rather than as uniformly scattered singles. Clusters are
+    # what a real meadow does; even singles are what a grid does.
+    for _ in range(rng.randrange(55, 75)):
+        bx = rng.randrange(4, WORLD_COLS - 4)
+        by = rng.randrange(4, WORLD_ROWS - 4)
+        if abs(bx - centre[0]) < 6 and abs(by - centre[1]) < 6:
+            continue
+        tile = rng.choice([T_TALLGRASS, T_FLOWER, T_DECOR])
+        scatter_on_ground(grid, rng, bx, by, rng.choice([1, 1, 2, 2, 3]), tile)
 
     # The road surface: the marsh keeps timber boardwalks (that is what a
     # marsh path *is*), everywhere else paves in flagstone -- stone roads suit
